@@ -8,6 +8,7 @@ String CurrentQuoteContext = ""
 
 Event OnInit()
     RegisterEvents()
+    RefreshDialogueOwnerFromShared()
 EndEvent
 
 Event OnPlayerLoadGame()
@@ -28,12 +29,7 @@ Event OnPayQuoteEvent(String eventName, String strArg, Float numArg, Form sender
         If CurrentQuoteAmount < 0
             CurrentQuoteAmount = 0
         EndIf
-        If TFDPayGold != None
-            TFDPayGold.SetValueInt(CurrentQuoteAmount)
-        EndIf
-        If TFDDialogueQuest
-            TFDDialogueQuest.RefreshPayText()
-        EndIf
+        ApplySharedQuoteToDialogueOwner(CurrentQuoteAmount)
         Return
     EndIf
 
@@ -43,25 +39,55 @@ Event OnPayQuoteEvent(String eventName, String strArg, Float numArg, Form sender
     EndIf
 EndEvent
 
+Function ApplySharedQuoteToDialogueOwner(Int aiAmount)
+    If aiAmount < 0
+        aiAmount = 0
+    EndIf
+
+    CurrentQuoteAmount = aiAmount
+
+    If TFDDialogueQuest
+        TFDDialogueQuest.ApplySharedPayAmount(CurrentQuoteAmount)
+        Return
+    EndIf
+
+    If TFDPayGold != None
+        TFDPayGold.SetValueInt(CurrentQuoteAmount)
+    EndIf
+EndFunction
+
 Function ClearQuote()
     CurrentQuoteContext = ""
     CurrentQuoteAmount = 0
+
+    If TFDDialogueQuest
+        TFDDialogueQuest.ClearSharedPayAmount()
+        Return
+    EndIf
+
     If TFDPayGold != None
         TFDPayGold.SetValueInt(0)
     EndIf
+EndFunction
+
+Function RefreshDialogueOwnerFromShared()
+    Int payAmount = 0
+    If TFDPayGold != None
+        payAmount = TFDPayGold.GetValueInt()
+    EndIf
+    If payAmount < 0
+        payAmount = 0
+    EndIf
+
+    CurrentQuoteAmount = payAmount
+
     If TFDDialogueQuest
-        TFDDialogueQuest.RefreshPayText()
+        TFDDialogueQuest.RefreshPayTextFromShared()
     EndIf
 EndFunction
 
 Function UpdatePayAmount()
-    If TFDPayGold != None
-        TFDPayGold.SetValueInt(CurrentQuoteAmount)
-    EndIf
-
-    If TFDDialogueQuest
-        TFDDialogueQuest.RefreshPayText()
-    EndIf
+    ApplySharedQuoteToDialogueOwner(CurrentQuoteAmount)
 EndFunction
 
 Int Function GetCurrentQuoteAmount()
