@@ -3,5 +3,6 @@ Scriptname TFDDialogueQuestScript extends Quest
 GlobalVariable Property TFDPayGold Auto
 
 Function RefreshPayText()
-	UpdateCurrentInstanceGlobal(TFDPayGold)
+    Debug.Notification("RefreshPayText: " + TFDPayGold.GetValueInt())
+    UpdateCurrentInstanceGlobal(TFDPayGold)
 EndFunction
