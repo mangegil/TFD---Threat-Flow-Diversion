@@ -6,6 +6,8 @@ Scriptname TFD_TIF__0507F1D6 Extends TopicInfo Hidden
 Function Fragment_1(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
+;AFTER PLEASURE RECRUIT
+
 TFDPleasureQuestScript pleasureCtrl = (TFDPleasureQuest as TFDPleasureQuestScript)
 If pleasureCtrl != None
 	pleasureCtrl.ChooseRecruit()

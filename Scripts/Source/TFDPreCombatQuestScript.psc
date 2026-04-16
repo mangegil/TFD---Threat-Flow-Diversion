@@ -6,6 +6,7 @@ GlobalVariable Property TFDJoinEnemyState Auto
 GlobalVariable Property TFDPayGold Auto
 
 TFDPlayerTeammateQuestScript Property Registry Auto
+TFDTemporaryFollowerQuestScript Property TemporaryFollowerQuest Auto
 
 Quest Property TFDSystemEventQuest Auto
 Quest Property TFDTruceBridgeQuest Auto
@@ -490,7 +491,15 @@ Bool Function ResolvePay()
 EndFunction
 
 Function ResolveFight()
-	Actor akSpeaker = ResolveCurrentSpeaker()
+	ResolveFightForActor(None)
+EndFunction
+
+Function ResolveFightForActor(Actor akActor)
+	Actor akSpeaker = akActor
+
+	If akSpeaker == None || akSpeaker.IsDead()
+		akSpeaker = ResolveCurrentSpeaker()
+	EndIf
 
 	EndSafePass(False)
 	EndTemporaryFollow(False)
@@ -498,7 +507,7 @@ Function ResolveFight()
 	ReleasePleasureLock(True)
 
 	SetResolvedState(RESULT_FIGHT)
-	SendModEvent("TFDPreCombatOutcomeFight")
+	SendModEvent("TFDPreCombatOutcomeFight", ActorFormIDString(akSpeaker))
 	ClearBridge()
 
 	If akSpeaker && !akSpeaker.IsDead()
@@ -661,12 +670,8 @@ EndFunction
 
 
 Bool Function BeginTemporaryFollowExternal(Actor akSpeaker, Float afDuration = 0.0)
-	Actor playerRef = Game.GetPlayer()
 	Float useDuration = afDuration
-
-	If playerRef == None
-		Return False
-	EndIf
+	Debug.Trace("TFDPreCombatQuestScript: BeginTemporaryFollowExternal entry actor=" + akSpeaker + " duration=" + afDuration)
 
 	If useDuration <= 0.0
 		useDuration = FollowDuration
@@ -680,6 +685,7 @@ Bool Function BeginTemporaryFollowExternal(Actor akSpeaker, Float afDuration = 0
 	EndIf
 
 	If akSpeaker == None || akSpeaker.IsDead()
+		Debug.Trace("TFDPreCombatQuestScript: BeginTemporaryFollowExternal abort speaker invalid")
 		Return False
 	EndIf
 
@@ -689,15 +695,21 @@ Bool Function BeginTemporaryFollowExternal(Actor akSpeaker, Float afDuration = 0
 	EndJoinEnemy(False)
 	ClearBridge()
 
+	If TemporaryFollowerQuest == None
+		Debug.Trace("TFDPreCombatQuestScript: BeginTemporaryFollowExternal abort TemporaryFollowerQuest NONE")
+		Return False
+	EndIf
+
 	Utility.WaitMenuMode(0.20)
-	If !PromoteActorAsRecruitLikeOutcome(akSpeaker, True)
+	Bool started = TemporaryFollowerQuest.BeginFollow(akSpeaker, useDuration)
+	Debug.Trace("TFDPreCombatQuestScript: BeginTemporaryFollowExternal begin result=" + started + " speaker=" + akSpeaker)
+	If !started
 		Return False
 	EndIf
 
 	ManagedFollowActor = akSpeaker
 	FollowExpireAt = Utility.GetCurrentRealTime() + useDuration
-	FollowActive = True
-	QueueUpdate()
+	FollowActive = False
 	Return True
 EndFunction
 
@@ -707,12 +719,8 @@ EndFunction
 
 Function ResolveFollowForActor(Actor akActor)
 	Actor akSpeaker = akActor
-	Actor playerRef = Game.GetPlayer()
 	Float useDuration = FollowDuration
-
-	If playerRef == None
-		Return
-	EndIf
+	Debug.Trace("TFDPreCombatQuestScript: ResolveFollowForActor entry actor=" + akActor + " currentSpeaker=" + ResolveCurrentSpeaker())
 
 	If useDuration <= 0.0
 		useDuration = 60.0
@@ -723,6 +731,12 @@ Function ResolveFollowForActor(Actor akActor)
 	EndIf
 
 	If akSpeaker == None || akSpeaker.IsDead()
+		Debug.Trace("TFDPreCombatQuestScript: ResolveFollowForActor abort speaker invalid")
+		Return
+	EndIf
+
+	If TemporaryFollowerQuest == None
+		Debug.Trace("TFDPreCombatQuestScript: ResolveFollowForActor abort TemporaryFollowerQuest NONE")
 		Return
 	EndIf
 
@@ -736,59 +750,33 @@ Function ResolveFollowForActor(Actor akActor)
 	ClearBridge()
 
 	Utility.WaitMenuMode(0.20)
-	If !PromoteActorAsRecruitLikeOutcome(akSpeaker, True)
+	Bool started = TemporaryFollowerQuest.BeginFollow(akSpeaker, useDuration)
+	Debug.Trace("TFDPreCombatQuestScript: ResolveFollowForActor begin result=" + started + " speaker=" + akSpeaker)
+	If !started
 		Return
 	EndIf
 
 	ManagedFollowActor = akSpeaker
 	FollowExpireAt = Utility.GetCurrentRealTime() + useDuration
-	FollowActive = True
-	QueueUpdate()
+	FollowActive = False
 EndFunction
 
 Function UpdateTemporaryFollow()
-	If !FollowActive
-		Return
-	EndIf
-
-	Actor playerRef = Game.GetPlayer()
-	If playerRef == None
-		EndTemporaryFollow(False)
-		Return
-	EndIf
-
-	If ManagedFollowActor == None || ManagedFollowActor.IsDead()
-		EndTemporaryFollow(False)
-		Return
-	EndIf
-
-	If playerRef.IsWeaponDrawn()
-		EndTemporaryFollow(True)
-		Return
-	EndIf
-
-	If Utility.GetCurrentRealTime() >= FollowExpireAt
-		EndTemporaryFollow(True)
-		Return
-	EndIf
+	; Temporary follow runtime is now owned by TFDTemporaryFollowerQuest.
+	Return
 EndFunction
 
 Function EndTemporaryFollow(Bool abRestoreHostility)
-	Actor playerRef = Game.GetPlayer()
 	Actor previousActor = ManagedFollowActor
 
-	If previousActor != None
-		SendModEvent("TFDPreCombatOutcomeReleaseEnd", ActorFormIDString(previousActor), abRestoreHostility as Float)
+	If TemporaryFollowerQuest != None
+		TemporaryFollowerQuest.EndFollow(abRestoreHostility)
+	ElseIf previousActor != None
 		If Registry != None
 			Registry.UnregisterTeammate(previousActor)
 		EndIf
 		previousActor.SetPlayerTeammate(False, False)
 		previousActor.EvaluatePackage()
-
-		If abRestoreHostility && playerRef && !previousActor.IsDead()
-			previousActor.StartCombat(playerRef)
-			previousActor.EvaluatePackage()
-		EndIf
 	EndIf
 
 	ManagedFollowActor = None

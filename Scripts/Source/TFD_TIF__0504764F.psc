@@ -6,7 +6,6 @@ Scriptname TFD_TIF__0504764F Extends TopicInfo Hidden
 Function Fragment_1(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
-; Do Nothing explicit harus lewat router pusat supaya Choice/Result kerekam.
 TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
 If sys != None
 	sys.ResolveDoNothing(akSpeaker)

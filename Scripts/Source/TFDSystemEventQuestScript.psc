@@ -1376,18 +1376,24 @@ Bool Function ResolveRelease(Actor akSpeaker)
 EndFunction
 
 Bool Function ResolveFollowPlayer(Actor akSpeaker)
+	Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer entry speaker=" + akSpeaker + " activeFlow=" + CurrentRootFlow + " routeActive=" + CurrentRouteActive + " method=" + CurrentMethod + " branch=" + CurrentBranch)
 	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_follow_player")
+		Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer EnsureExplicitDialogueRoute FAILED speaker=" + akSpeaker)
 		Return False
 	EndIf
 
 	Int requestedFlow = ResolveExplicitDialogueFlow(akSpeaker)
+	Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer flow=" + requestedFlow + " speaker=" + akSpeaker)
 
 	RecordDialogueChoice(CHOICE_FOLLOW_ME, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_follow_player")
 	ResolveRecordedChoice(akSpeaker, "resolve_follow_player")
+	Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer choice recorded speaker=" + akSpeaker)
 
 	Bool ok = ResolveDialogueOutcome(OUTCOME_FOLLOW_PLAYER, akSpeaker)
+	Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer outcome result=" + ok + " speaker=" + akSpeaker)
 	If ok
 		Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+		Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer emit grace flow=" + requestedFlow + " chosenSpeaker=" + chosenSpeaker)
 		EmitFollowGraceEventForFlow(requestedFlow, chosenSpeaker)
 	EndIf
 	Return ok
@@ -1583,7 +1589,7 @@ Bool Function ExecutePreCombatFight(Actor akSpeaker)
 		ClearTransientDialogueBridges()
 	EndIf
 
-	SendModEvent("TFDPreCombatOutcomeFight")
+	SendModEvent("TFDPreCombatOutcomeFight", ActorFormIDString(chosenSpeaker))
 
 	If chosenSpeaker != None && playerRef != None && !chosenSpeaker.IsDead()
 		chosenSpeaker.StopCombatAlarm()
@@ -1730,7 +1736,7 @@ Bool Function RoutePreCombatOutcome(Int aiOutcome, Actor akSpeaker)
 	ElseIf aiOutcome == OUTCOME_PAY
 		Return preCtrl.ResolvePay()
 	ElseIf aiOutcome == OUTCOME_FIGHT
-		preCtrl.ResolveFight()
+		preCtrl.ResolveFightForActor(chosenSpeaker)
 		Return True
 	ElseIf aiOutcome == OUTCOME_RECRUIT
 		preCtrl.ResolveRecruitForActor(chosenSpeaker)
@@ -1742,7 +1748,9 @@ Bool Function RoutePreCombatOutcome(Int aiOutcome, Actor akSpeaker)
 		preCtrl.ResolveReleaseForActor(chosenSpeaker)
 		Return True
 	ElseIf aiOutcome == OUTCOME_FOLLOW_PLAYER
+		Debug.Trace("[TFD][FollowTrace] RoutePreCombatOutcome FOLLOW chosenSpeaker=" + chosenSpeaker + " preCtrl=" + preCtrl)
 		preCtrl.ResolveFollowForActor(chosenSpeaker)
+		Debug.Trace("[TFD][FollowTrace] RoutePreCombatOutcome FOLLOW dispatched chosenSpeaker=" + chosenSpeaker)
 		Return True
 	ElseIf aiOutcome == OUTCOME_DO_NOTHING
 		preCtrl.ResolveDoNothing()

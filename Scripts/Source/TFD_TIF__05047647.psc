@@ -6,6 +6,8 @@ Scriptname TFD_TIF__05047647 Extends TopicInfo Hidden
 Function Fragment_1(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
+;BLEEDOUT PAY
+
 TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
 If sys != None
 	sys.ResolvePay(akSpeaker)
