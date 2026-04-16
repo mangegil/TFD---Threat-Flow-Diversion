@@ -51,7 +51,15 @@ Actor JoinEnemySourceActor
 Bool PleasureLockActive = False
 Actor PleasureLockActor
 
+Function RegisterBridgeEvents()
+	UnregisterForAllModEvents()
+	RegisterForModEvent("TFDPreCombatAssign", "OnBridgeEvent")
+	RegisterForModEvent("TFDPreCombatClear", "OnBridgeEvent")
+	RegisterForModEvent("TFDPreCombatClearAll", "OnBridgeEvent")
+EndFunction
+
 Event OnInit()
+	RegisterBridgeEvents()
 	ClearSpeaker()
 	QueueUpdate()
 EndEvent
@@ -61,7 +69,40 @@ Event OnPlayerLoadGame()
 	PleasureLockActive = False
 	PleasureLockActor = None
 	ClearBridge()
+	RegisterBridgeEvents()
 	QueueUpdate()
+EndEvent
+
+Event OnBridgeEvent(String eventName, String strArg, Float numArg, Form sender)
+	Actor aEvent = sender as Actor
+
+	If eventName == "TFDPreCombatAssign"
+		If aEvent != None && !aEvent.IsDead()
+			SetSpeaker(aEvent)
+			QueueUpdate()
+		EndIf
+		Return
+	EndIf
+
+	If eventName == "TFDPreCombatClear"
+		If aEvent != None
+			ClearSpeakerForActor(aEvent)
+		Else
+			ClearSpeaker()
+		EndIf
+		If ShouldKeepUpdating()
+			QueueUpdate()
+		EndIf
+		Return
+	EndIf
+
+	If eventName == "TFDPreCombatClearAll"
+		ClearSpeaker()
+		If ShouldKeepUpdating()
+			QueueUpdate()
+		EndIf
+		Return
+	EndIf
 EndEvent
 
 Function QueueUpdate()

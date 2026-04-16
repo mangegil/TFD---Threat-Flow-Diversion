@@ -834,6 +834,18 @@ Actor Function GetCachedSpeaker()
 	Return a
 EndFunction
 
+Actor Function ResolvePinnedRouteSpeaker()
+	If !CurrentRouteActive
+		Return None
+	EndIf
+
+	If CurrentRouteSpeaker != None && !CurrentRouteSpeaker.IsDead()
+		Return CurrentRouteSpeaker
+	EndIf
+
+	Return None
+EndFunction
+
 Actor Function ResolveSpeaker(Actor akSpeaker)
 	Actor playerRef = Game.GetPlayer()
 
@@ -841,6 +853,11 @@ Actor Function ResolveSpeaker(Actor akSpeaker)
 		If akSpeaker != playerRef && !akSpeaker.IsDead()
 			Return akSpeaker
 		EndIf
+	EndIf
+
+	Actor routeSpeaker = ResolvePinnedRouteSpeaker()
+	If routeSpeaker != None
+		Return routeSpeaker
 	EndIf
 
 	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
@@ -875,6 +892,53 @@ Actor Function ResolveSpeaker(Actor akSpeaker)
 	EndIf
 
 	Return None
+EndFunction
+
+Int Function ResolveExplicitDialogueFlow(Actor akSpeaker = None)
+	Int flow = GetActiveFlow()
+	If flow != FLOW_NONE
+		Return flow
+	EndIf
+
+	If CurrentRouteActive && CurrentRootFlow != FLOW_NONE
+		Return CurrentRootFlow
+	EndIf
+
+	flow = InferLiveFlow(akSpeaker)
+	If flow != FLOW_NONE
+		Return flow
+	EndIf
+
+	Return FLOW_NONE
+EndFunction
+
+Bool Function EnsureExplicitDialogueRoute(Actor akSpeaker = None, String asReason = "")
+	Int flow = ResolveExplicitDialogueFlow(akSpeaker)
+	Actor chosenSpeaker = akSpeaker
+
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		chosenSpeaker = ResolvePinnedRouteSpeaker()
+	EndIf
+
+	If flow == FLOW_NONE
+		Debug.Trace("TFDSystemEventQuestScript: EnsureExplicitDialogueRoute failed flow=NONE reason=" + asReason)
+		Return False
+	EndIf
+
+	If !CurrentRouteActive || CurrentRootFlow != flow
+		BeginDialogueRoute(flow, ENTRY_FORCEGREET, chosenSpeaker, asReason)
+	EndIf
+
+	MarkDialogueNegotiating(chosenSpeaker, asReason)
+
+	If chosenSpeaker != None && !chosenSpeaker.IsDead()
+		CurrentRouteSpeaker = chosenSpeaker
+		SetActiveFlow(flow, chosenSpeaker)
+	ElseIf CurrentRouteSpeaker != None && !CurrentRouteSpeaker.IsDead()
+		SetActiveFlow(flow, CurrentRouteSpeaker)
+	EndIf
+
+	Return True
 EndFunction
 
 Float Function GetGraceOutcomeDuration()
@@ -1209,6 +1273,8 @@ Bool Function ResolveDialogueOutcome(Int aiOutcome, Actor akSpeaker = None)
 		Return RouteAfterPleasureOutcome(aiOutcome, chosenSpeaker)
 	ElseIf flow == FLOW_PRECOMBAT
 		Return RoutePreCombatOutcome(aiOutcome, chosenSpeaker)
+	ElseIf flow == FLOW_INCOMBAT
+		Return RouteInCombatOutcome(aiOutcome, chosenSpeaker)
 	ElseIf flow == FLOW_BLEEDOUT
 		Return RouteBleedoutOutcome(aiOutcome, chosenSpeaker)
 	ElseIf flow == FLOW_CAPTIVE
@@ -1233,15 +1299,13 @@ EndFunction
 ; Public wrappers for dialogue fragments
 ; -------------------------------
 Bool Function ResolveKidnap(Actor akSpeaker)
-	If !HasActiveDialogueRoute()
-		Int autoFlow = InferLiveFlow(akSpeaker)
-		If autoFlow != FLOW_NONE
-			BeginDialogueRoute(autoFlow, ENTRY_FORCEGREET, akSpeaker, "resolve_kidnap_autobegin")
-			MarkDialogueNegotiating(akSpeaker, "resolve_kidnap_autobegin")
-		EndIf
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_kidnap")
+		Return False
 	EndIf
+
 	RecordDialogueChoice(CHOICE_KIDNAP, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_kidnap")
 	ResolveRecordedChoice(akSpeaker, "resolve_kidnap")
+
 	Bool ok = ResolveDialogueOutcome(OUTCOME_KIDNAP, akSpeaker)
 	If ok
 		SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceKidnap", akSpeaker)
@@ -1250,51 +1314,58 @@ Bool Function ResolveKidnap(Actor akSpeaker)
 EndFunction
 
 Bool Function ResolvePay(Actor akSpeaker)
-	If !HasActiveDialogueRoute()
-		Int autoFlow = InferLiveFlow(akSpeaker)
-		If autoFlow != FLOW_NONE
-			BeginDialogueRoute(autoFlow, ENTRY_FORCEGREET, akSpeaker, "resolve_pay_autobegin")
-			MarkDialogueNegotiating(akSpeaker, "resolve_pay_autobegin")
-		EndIf
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_pay")
+		Return False
 	EndIf
-	SetDialogueMethod(METHOD_PAY, akSpeaker, "resolve_pay")
+
+	If !SetDialogueMethod(METHOD_PAY, akSpeaker, "resolve_pay")
+		Return False
+	EndIf
+
 	SetDialogueBranch(BRANCH_PAY, akSpeaker, "resolve_pay")
 	Return ResolveDialogueOutcome(OUTCOME_PAY, akSpeaker)
 EndFunction
 
 Bool Function ResolveFight(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_fight")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_FIGHT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_fight")
 	ResolveRecordedChoice(akSpeaker, "resolve_fight")
 	Return ResolveDialogueOutcome(OUTCOME_FIGHT, akSpeaker)
 EndFunction
 
 Bool Function ResolveRecruit(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_recruit")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_RECRUIT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_recruit")
 	ResolveRecordedChoice(akSpeaker, "resolve_recruit")
 	Return ResolveDialogueOutcome(OUTCOME_RECRUIT, akSpeaker)
 EndFunction
 
 Bool Function ResolveJoinEnemy(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_join_enemy")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_JOIN_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_join_enemy")
 	ResolveRecordedChoice(akSpeaker, "resolve_join_enemy")
 	Return ResolveDialogueOutcome(OUTCOME_JOIN_ENEMY, akSpeaker)
 EndFunction
 
 Bool Function ResolveRelease(Actor akSpeaker)
-	Int requestedFlow = GetActiveFlow()
-	If requestedFlow == FLOW_NONE
-		requestedFlow = InferLiveFlow(akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_release")
+		Return False
 	EndIf
 
-	If !HasActiveDialogueRoute()
-		Int autoFlow = requestedFlow
-		If autoFlow != FLOW_NONE
-			BeginDialogueRoute(autoFlow, ENTRY_FORCEGREET, akSpeaker, "resolve_release_autobegin")
-			MarkDialogueNegotiating(akSpeaker, "resolve_release_autobegin")
-		EndIf
-	EndIf
+	Int requestedFlow = ResolveExplicitDialogueFlow(akSpeaker)
+
 	RecordDialogueChoice(CHOICE_RELEASE_ME, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_release")
 	ResolveRecordedChoice(akSpeaker, "resolve_release")
+
 	Bool ok = ResolveDialogueOutcome(OUTCOME_RELEASE, akSpeaker)
 	If ok
 		Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
@@ -1305,13 +1376,15 @@ Bool Function ResolveRelease(Actor akSpeaker)
 EndFunction
 
 Bool Function ResolveFollowPlayer(Actor akSpeaker)
-	Int requestedFlow = GetActiveFlow()
-	If requestedFlow == FLOW_NONE
-		requestedFlow = InferLiveFlow(akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_follow_player")
+		Return False
 	EndIf
+
+	Int requestedFlow = ResolveExplicitDialogueFlow(akSpeaker)
 
 	RecordDialogueChoice(CHOICE_FOLLOW_ME, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_follow_player")
 	ResolveRecordedChoice(akSpeaker, "resolve_follow_player")
+
 	Bool ok = ResolveDialogueOutcome(OUTCOME_FOLLOW_PLAYER, akSpeaker)
 	If ok
 		Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
@@ -1321,42 +1394,70 @@ Bool Function ResolveFollowPlayer(Actor akSpeaker)
 EndFunction
 
 Bool Function ResolveDoNothing(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_do_nothing")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_DO_NOTHING, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_do_nothing")
 	ResolveRecordedChoice(akSpeaker, "resolve_do_nothing")
 	Return ResolveDialogueOutcome(OUTCOME_DO_NOTHING, akSpeaker)
 EndFunction
 
 Bool Function ResolveWork(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_work")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_WORK, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_work")
 	ResolveRecordedChoice(akSpeaker, "resolve_work")
 	Return ResolveDialogueOutcome(OUTCOME_WORK, akSpeaker)
 EndFunction
 
 Bool Function ResolveLootEnemy(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_loot_enemy")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_LOOT_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_loot_enemy")
 	ResolveRecordedChoice(akSpeaker, "resolve_loot_enemy")
 	Return ResolveDialogueOutcome(OUTCOME_LOOT_ENEMY, akSpeaker)
 EndFunction
 
 Bool Function ResolveKillEnemy(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_kill_enemy")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_KILL_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_kill_enemy")
 	ResolveRecordedChoice(akSpeaker, "resolve_kill_enemy")
 	Return ResolveDialogueOutcome(OUTCOME_KILL_ENEMY, akSpeaker)
 EndFunction
 
 Bool Function ResolveThanks(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_thanks")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_THANKS, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_thanks")
 	ResolveRecordedChoice(akSpeaker, "resolve_thanks")
 	Return ResolveDialogueOutcome(OUTCOME_THANKS, akSpeaker)
 EndFunction
 
 Bool Function ResolveExtendContract(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_extend_contract")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_EXTEND_CONTRACT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_extend_contract")
 	ResolveRecordedChoice(akSpeaker, "resolve_extend_contract")
 	Return ResolveDialogueOutcome(OUTCOME_EXTEND_CONTRACT, akSpeaker)
 EndFunction
 
 Bool Function ResolveTerminateContract(Actor akSpeaker)
+	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_terminate_contract")
+		Return False
+	EndIf
+
 	RecordDialogueChoice(CHOICE_TERMINATE_CONTRACT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_terminate_contract")
 	ResolveRecordedChoice(akSpeaker, "resolve_terminate_contract")
 	Return ResolveDialogueOutcome(OUTCOME_TERMINATE_CONTRACT, akSpeaker)
@@ -1376,7 +1477,6 @@ Bool Function RecordImplicitBleedoutCloseNoCommit(Actor akSpeaker = None)
 	RecordDialogueChoice(CHOICE_DO_NOTHING, CHOICE_SOURCE_DIALOG_CLOSED_NO_COMMIT, akSpeaker, "implicit_bleed_close_no_commit")
 	Return ResolveRecordedChoice(akSpeaker, "implicit_bleed_close_no_commit")
 EndFunction
-
 
 Int Function GetSharedPayAmount()
 	If TFDPayGold == None
@@ -1612,25 +1712,139 @@ EndFunction
 ; Route: PreCombat
 ; -------------------------------
 Bool Function RoutePreCombatOutcome(Int aiOutcome, Actor akSpeaker)
+	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
+	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
+
+	If preCtrl == None
+		Debug.Notification("TFD: PreCombat quest is not available.")
+		Return False
+	EndIf
+
+	If chosenSpeaker != None && !chosenSpeaker.IsDead()
+		preCtrl.SetSpeaker(chosenSpeaker)
+	EndIf
+
 	If aiOutcome == OUTCOME_KIDNAP
-		Return ExecutePreCombatKidnap(akSpeaker)
+		preCtrl.ResolveKidnapForActor(chosenSpeaker)
+		Return True
 	ElseIf aiOutcome == OUTCOME_PAY
-		Return ExecutePreCombatPay(akSpeaker)
+		Return preCtrl.ResolvePay()
 	ElseIf aiOutcome == OUTCOME_FIGHT
-		Return ExecutePreCombatFight(akSpeaker)
+		preCtrl.ResolveFight()
+		Return True
 	ElseIf aiOutcome == OUTCOME_RECRUIT
-		Return ExecutePreCombatRecruit(akSpeaker)
+		preCtrl.ResolveRecruitForActor(chosenSpeaker)
+		Return True
 	ElseIf aiOutcome == OUTCOME_JOIN_ENEMY
-		Return ExecutePreCombatJoinEnemy(akSpeaker)
+		preCtrl.ResolveJoinEnemy()
+		Return True
 	ElseIf aiOutcome == OUTCOME_RELEASE
-		Return ExecutePreCombatRelease(akSpeaker)
+		preCtrl.ResolveReleaseForActor(chosenSpeaker)
+		Return True
 	ElseIf aiOutcome == OUTCOME_FOLLOW_PLAYER
-		Return ExecutePreCombatFollow(akSpeaker)
+		preCtrl.ResolveFollowForActor(chosenSpeaker)
+		Return True
 	ElseIf aiOutcome == OUTCOME_DO_NOTHING
-		Return ExecutePreCombatDoNothing(akSpeaker)
+		preCtrl.ResolveDoNothing()
+		Return True
 	EndIf
 
 	Debug.Notification("TFD: Invalid PreCombat outcome.")
+	Return False
+EndFunction
+
+Bool Function ExecuteInCombatPay(Actor akSpeaker)
+	Actor playerRef = Game.GetPlayer()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	Int payAmount = GetSharedPayAmount()
+
+	If playerRef == None || Gold001 == None
+		Return False
+	EndIf
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		Return False
+	EndIf
+	If payAmount <= 0
+		Return False
+	EndIf
+
+	playerRef.RemoveItem(Gold001, payAmount, True, chosenSpeaker)
+	SendModEvent("TFDInCombatOutcomePay", ActorFormIDString(chosenSpeaker))
+	Return True
+EndFunction
+
+Bool Function ExecuteInCombatFight(Actor akSpeaker)
+	Actor playerRef = Game.GetPlayer()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	SendModEvent("TFDInCombatOutcomeReset", ActorFormIDString(chosenSpeaker))
+
+	If chosenSpeaker != None && playerRef != None && !chosenSpeaker.IsDead()
+		chosenSpeaker.StopCombatAlarm()
+		chosenSpeaker.StartCombat(playerRef)
+		chosenSpeaker.EvaluatePackage()
+	EndIf
+	Return True
+EndFunction
+
+Bool Function ExecuteInCombatRecruit(Actor akSpeaker)
+	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If preCtrl == None
+		Return False
+	EndIf
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		Return False
+	EndIf
+
+	SendModEvent("TFDInCombatOutcomeReset", ActorFormIDString(chosenSpeaker))
+	Return preCtrl.PromoteActorAsRecruitLikeOutcome(chosenSpeaker, True)
+EndFunction
+
+Bool Function ExecuteInCombatJoinEnemy(Actor akSpeaker)
+	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If preCtrl == None
+		Return False
+	EndIf
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		Return False
+	EndIf
+	If !preCtrl.IsJoinEnemyOfferedByNative()
+		Debug.Notification("TFD: Join Enemy is not available here.")
+		Return False
+	EndIf
+
+	SendModEvent("TFDInCombatOutcomeReset", ActorFormIDString(chosenSpeaker))
+	Return preCtrl.BeginJoinEnemyExternal(chosenSpeaker)
+EndFunction
+
+Bool Function RouteInCombatOutcome(Int aiOutcome, Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If aiOutcome == OUTCOME_KIDNAP
+		SendModEvent("TFDInCombatOutcomeCaptive", ActorFormIDString(chosenSpeaker))
+		Return True
+	ElseIf aiOutcome == OUTCOME_PAY
+		Return ExecuteInCombatPay(chosenSpeaker)
+	ElseIf aiOutcome == OUTCOME_FIGHT
+		Return ExecuteInCombatFight(chosenSpeaker)
+	ElseIf aiOutcome == OUTCOME_RECRUIT
+		Return ExecuteInCombatRecruit(chosenSpeaker)
+	ElseIf aiOutcome == OUTCOME_JOIN_ENEMY
+		Return ExecuteInCombatJoinEnemy(chosenSpeaker)
+	ElseIf aiOutcome == OUTCOME_RELEASE
+		Return True
+	ElseIf aiOutcome == OUTCOME_FOLLOW_PLAYER
+		Return True
+	ElseIf aiOutcome == OUTCOME_DO_NOTHING
+		SendModEvent("TFDInCombatOutcomeReset", ActorFormIDString(chosenSpeaker))
+		Return True
+	EndIf
+
+	Debug.Notification("TFD: Invalid InCombat outcome.")
 	Return False
 EndFunction
 
