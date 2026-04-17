@@ -310,6 +310,32 @@ Function ClearActiveFlow()
 	SetActiveFlow(FLOW_NONE, None)
 EndFunction
 
+Bool Function ShouldAllowCachedSpeakerFallback()
+	If CurrentRouteActive
+		Return True
+	EndIf
+
+	If CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
+		Return True
+	EndIf
+
+	Return False
+EndFunction
+
+Function FinalizeTerminalDialogueRoute(String asReason = "", Bool abPreserveCaptiveWorkSpeaker = False)
+	If CurrentRouteActive
+		CloseDialogueRouteResolved(asReason)
+	EndIf
+
+	ResetRouteRecorderState(True)
+
+	If abPreserveCaptiveWorkSpeaker && CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
+		SetActiveFlow(FLOW_CAPTIVE, CaptiveWorkSpeaker)
+	Else
+		ClearActiveFlow()
+	EndIf
+EndFunction
+
 Function ResetRouteRecorderState(Bool abKeepToken = False)
 	If !abKeepToken
 		CurrentRouteToken = 0
@@ -730,6 +756,10 @@ Int Function GetActiveFlow()
 		Return CurrentRootFlow
 	EndIf
 
+	If CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
+		Return FLOW_CAPTIVE
+	EndIf
+
 	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
 	If preCtrl != None
 		Actor preSpeaker = preCtrl.GetSpeaker()
@@ -762,6 +792,10 @@ EndFunction
 Int Function InferLiveFlow(Actor akSpeaker = None)
 	If CurrentRouteActive && CurrentRootFlow != FLOW_NONE
 		Return CurrentRootFlow
+	EndIf
+
+	If CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
+		Return FLOW_CAPTIVE
 	EndIf
 
 	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
@@ -876,6 +910,10 @@ Actor Function ResolveSpeaker(Actor akSpeaker)
 		EndIf
 	EndIf
 
+	If CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
+		Return CaptiveWorkSpeaker
+	EndIf
+
 	If IsCaptiveDialogueFlowLive()
 		TFDCaptiveBridge captiveCtrl = GetCaptiveBridgeController()
 		If captiveCtrl != None
@@ -886,9 +924,11 @@ Actor Function ResolveSpeaker(Actor akSpeaker)
 		EndIf
 	EndIf
 
-	Actor cachedSpeaker = GetCachedSpeaker()
-	If cachedSpeaker != None && !cachedSpeaker.IsDead()
-		Return cachedSpeaker
+	If ShouldAllowCachedSpeakerFallback()
+		Actor cachedSpeaker = GetCachedSpeaker()
+		If cachedSpeaker != None && !cachedSpeaker.IsDead()
+			Return cachedSpeaker
+		EndIf
 	EndIf
 
 	Return None
@@ -1309,6 +1349,7 @@ Bool Function ResolveKidnap(Actor akSpeaker)
 	Bool ok = ResolveDialogueOutcome(OUTCOME_KIDNAP, akSpeaker)
 	If ok
 		SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceKidnap", akSpeaker)
+		FinalizeTerminalDialogueRoute("resolve_kidnap_done")
 	EndIf
 	Return ok
 EndFunction
@@ -1333,7 +1374,11 @@ Bool Function ResolveFight(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_FIGHT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_fight")
 	ResolveRecordedChoice(akSpeaker, "resolve_fight")
-	Return ResolveDialogueOutcome(OUTCOME_FIGHT, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_FIGHT, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_fight_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveRecruit(Actor akSpeaker)
@@ -1343,7 +1388,11 @@ Bool Function ResolveRecruit(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_RECRUIT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_recruit")
 	ResolveRecordedChoice(akSpeaker, "resolve_recruit")
-	Return ResolveDialogueOutcome(OUTCOME_RECRUIT, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_RECRUIT, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_recruit_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveJoinEnemy(Actor akSpeaker)
@@ -1353,7 +1402,11 @@ Bool Function ResolveJoinEnemy(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_JOIN_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_join_enemy")
 	ResolveRecordedChoice(akSpeaker, "resolve_join_enemy")
-	Return ResolveDialogueOutcome(OUTCOME_JOIN_ENEMY, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_JOIN_ENEMY, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_join_enemy_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveRelease(Actor akSpeaker)
@@ -1371,6 +1424,7 @@ Bool Function ResolveRelease(Actor akSpeaker)
 		Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
 		EmitReleaseGraceEventForFlow(requestedFlow, chosenSpeaker)
 		SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceRelease", chosenSpeaker)
+		FinalizeTerminalDialogueRoute("resolve_release_done")
 	EndIf
 	Return ok
 EndFunction
@@ -1395,6 +1449,7 @@ Bool Function ResolveFollowPlayer(Actor akSpeaker)
 		Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
 		Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer emit grace flow=" + requestedFlow + " chosenSpeaker=" + chosenSpeaker)
 		EmitFollowGraceEventForFlow(requestedFlow, chosenSpeaker)
+		FinalizeTerminalDialogueRoute("resolve_follow_player_done")
 	EndIf
 	Return ok
 EndFunction
@@ -1406,7 +1461,11 @@ Bool Function ResolveDoNothing(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_DO_NOTHING, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_do_nothing")
 	ResolveRecordedChoice(akSpeaker, "resolve_do_nothing")
-	Return ResolveDialogueOutcome(OUTCOME_DO_NOTHING, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_DO_NOTHING, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_do_nothing_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveWork(Actor akSpeaker)
@@ -1416,7 +1475,11 @@ Bool Function ResolveWork(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_WORK, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_work")
 	ResolveRecordedChoice(akSpeaker, "resolve_work")
-	Return ResolveDialogueOutcome(OUTCOME_WORK, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_WORK, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_work_done", True)
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveLootEnemy(Actor akSpeaker)
@@ -1426,7 +1489,11 @@ Bool Function ResolveLootEnemy(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_LOOT_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_loot_enemy")
 	ResolveRecordedChoice(akSpeaker, "resolve_loot_enemy")
-	Return ResolveDialogueOutcome(OUTCOME_LOOT_ENEMY, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_LOOT_ENEMY, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_loot_enemy_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveKillEnemy(Actor akSpeaker)
@@ -1436,7 +1503,11 @@ Bool Function ResolveKillEnemy(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_KILL_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_kill_enemy")
 	ResolveRecordedChoice(akSpeaker, "resolve_kill_enemy")
-	Return ResolveDialogueOutcome(OUTCOME_KILL_ENEMY, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_KILL_ENEMY, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_kill_enemy_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveThanks(Actor akSpeaker)
@@ -1446,7 +1517,11 @@ Bool Function ResolveThanks(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_THANKS, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_thanks")
 	ResolveRecordedChoice(akSpeaker, "resolve_thanks")
-	Return ResolveDialogueOutcome(OUTCOME_THANKS, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_THANKS, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_thanks_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveExtendContract(Actor akSpeaker)
@@ -1456,7 +1531,11 @@ Bool Function ResolveExtendContract(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_EXTEND_CONTRACT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_extend_contract")
 	ResolveRecordedChoice(akSpeaker, "resolve_extend_contract")
-	Return ResolveDialogueOutcome(OUTCOME_EXTEND_CONTRACT, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_EXTEND_CONTRACT, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_extend_contract_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ResolveTerminateContract(Actor akSpeaker)
@@ -1466,7 +1545,11 @@ Bool Function ResolveTerminateContract(Actor akSpeaker)
 
 	RecordDialogueChoice(CHOICE_TERMINATE_CONTRACT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_terminate_contract")
 	ResolveRecordedChoice(akSpeaker, "resolve_terminate_contract")
-	Return ResolveDialogueOutcome(OUTCOME_TERMINATE_CONTRACT, akSpeaker)
+	Bool ok = ResolveDialogueOutcome(OUTCOME_TERMINATE_CONTRACT, akSpeaker)
+	If ok
+		FinalizeTerminalDialogueRoute("resolve_terminate_contract_done")
+	EndIf
+	Return ok
 EndFunction
 
 Bool Function ChoosePayMethod(Actor akSpeaker)
