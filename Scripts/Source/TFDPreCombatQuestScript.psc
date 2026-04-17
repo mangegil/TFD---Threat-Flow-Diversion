@@ -786,6 +786,19 @@ Function EndTemporaryFollow(Bool abRestoreHostility)
 EndFunction
 
 
+Function NormalizeRecruitSpeakerState(Actor akSpeaker, Actor akPlayer)
+	If akSpeaker == None || akPlayer == None
+		Return
+	EndIf
+
+	akSpeaker.SetRelationshipRank(akPlayer, 4)
+	akPlayer.SetRelationshipRank(akSpeaker, 4)
+	akSpeaker.SetPlayerTeammate(True, False)
+	akSpeaker.StopCombat()
+	akSpeaker.StopCombatAlarm()
+	akSpeaker.EvaluatePackage()
+EndFunction
+
 Bool Function PromoteActorAsRecruitLikeOutcome(Actor akSpeaker, Bool abAssignToTruceQuest = True)
 	Actor playerRef = Game.GetPlayer()
 
@@ -802,11 +815,7 @@ Bool Function PromoteActorAsRecruitLikeOutcome(Actor akSpeaker, Bool abAssignToT
 	EndJoinEnemy(False)
 
 	ManagedRecruitActor = akSpeaker
-	akSpeaker.SetRelationshipRank(playerRef, 4)
-	akSpeaker.SetPlayerTeammate(True, False)
-	akSpeaker.StopCombat()
-	akSpeaker.StopCombatAlarm()
-	akSpeaker.EvaluatePackage()
+	NormalizeRecruitSpeakerState(akSpeaker, playerRef)
 	ReleasePleasureLock(True)
 	ClearTransientDialogueBridges()
 

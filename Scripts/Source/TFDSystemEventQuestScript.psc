@@ -756,10 +756,6 @@ Int Function GetActiveFlow()
 		Return CurrentRootFlow
 	EndIf
 
-	If CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
-		Return FLOW_CAPTIVE
-	EndIf
-
 	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
 	If preCtrl != None
 		Actor preSpeaker = preCtrl.GetSpeaker()
@@ -792,10 +788,6 @@ EndFunction
 Int Function InferLiveFlow(Actor akSpeaker = None)
 	If CurrentRouteActive && CurrentRootFlow != FLOW_NONE
 		Return CurrentRootFlow
-	EndIf
-
-	If CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
-		Return FLOW_CAPTIVE
 	EndIf
 
 	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
@@ -908,10 +900,6 @@ Actor Function ResolveSpeaker(Actor akSpeaker)
 		If bleedSpeaker != None && !bleedSpeaker.IsDead()
 			Return bleedSpeaker
 		EndIf
-	EndIf
-
-	If CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
-		Return CaptiveWorkSpeaker
 	EndIf
 
 	If IsCaptiveDialogueFlowLive()
@@ -1596,6 +1584,19 @@ Function PreparePreCombatSpeaker(TFDPreCombatQuestScript preCtrl, Actor akSpeake
 	EndIf
 EndFunction
 
+Function NormalizePreCombatRecruitSpeakerState(Actor akSpeaker, Actor akPlayer)
+	If akSpeaker == None || akPlayer == None
+		Return
+	EndIf
+
+	akSpeaker.SetRelationshipRank(akPlayer, 4)
+	akPlayer.SetRelationshipRank(akSpeaker, 4)
+	akSpeaker.SetPlayerTeammate(True, False)
+	akSpeaker.StopCombat()
+	akSpeaker.StopCombatAlarm()
+	akSpeaker.EvaluatePackage()
+EndFunction
+
 Function CleanupPreCombatTemporaryState(TFDPreCombatQuestScript preCtrl)
 	If preCtrl == None
 		Return
@@ -1708,11 +1709,7 @@ Bool Function ExecutePreCombatRecruit(Actor akSpeaker)
 		Return False
 	EndIf
 
-	chosenSpeaker.SetRelationshipRank(playerRef, 4)
-	chosenSpeaker.SetPlayerTeammate(True, False)
-	chosenSpeaker.StopCombat()
-	chosenSpeaker.StopCombatAlarm()
-	chosenSpeaker.EvaluatePackage()
+	NormalizePreCombatRecruitSpeakerState(chosenSpeaker, playerRef)
 	Return True
 EndFunction
 
