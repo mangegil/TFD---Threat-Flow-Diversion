@@ -6,7 +6,11 @@ Scriptname TFD_TIF__0513562B Extends TopicInfo Hidden
 Function Fragment_0(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
-(TFDSystemEventQuest as TFDSystemEventQuestScript).ResolveJoinEnemy(akSpeaker)
+;INCOMBAT JOIN ENEMY
+TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
+If sys != None
+	sys.ResolveJoinEnemy(akSpeaker)
+EndIf
 ;END CODE
 EndFunction
 ;END FRAGMENT

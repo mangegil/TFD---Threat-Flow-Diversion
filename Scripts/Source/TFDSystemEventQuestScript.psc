@@ -1,19 +1,50 @@
 Scriptname TFDSystemEventQuestScript extends Quest
 
 ; ============================================================
-; TFD centralized dialogue outcome router
+; TFDSystemEventQuestScript (flow-aware compatibility mapper)
 ; ------------------------------------------------------------
-; Current patch goal:
-; - keep all dialogue fragments pointed to one script
-; - keep non-Pleasure dialogue outcomes in this system quest
-; - pleasure runtime ownership has been moved out
+; Tujuan versi ini:
+; - tetap tipis sebagai endpoint fragment dialog
+; - simpan speaker aktif dan flow aktif
+; - compatible dengan native + Papyrus baseline terbaru
+; - route choice ke owner lama / legacy mod events yang masih dipakai
+; - pertahankan method compatibility untuk fragment TIF dan shell quest
 ; ============================================================
 
 ; -------------------------------
-; Active flow tracking
+; Alias bridge
 ; -------------------------------
 ReferenceAlias Property ActiveSpeaker Auto
+ReferenceAlias Property PackageDriver Auto
 
+; -------------------------------
+; Utility / data
+; -------------------------------
+Quest Property TFDDialogue Auto
+GlobalVariable Property TFDPayGold Auto
+MiscObject Property Gold001 Auto
+Faction Property TFDDefeatedFaction Auto
+Faction Property TFDTeammateFaction Auto
+
+; -------------------------------
+; Optional legacy controllers kept only for compatibility
+; -------------------------------
+TFDPreCombatQuestScript Property TFDPreCombatQuest Auto
+TFDInCombatQuestScript Property TFDInCombatQuest Auto
+TFDBleedoutQuestScript Property TFDBleedoutQuest Auto
+TFDCaptiveBridge Property TFDCaptiveQuest Auto
+TFDPleasureQuestScript Property TFDPleasureQuest Auto
+TFDPlayerTeammateQuestScript Property TFDPlayerTeammateQuest Auto
+
+; -------------------------------
+; Debug
+; -------------------------------
+Bool Property EnableDebugTrace = True Auto
+
+; -------------------------------
+; Flow constants
+; Keep these for compatibility with existing shell scripts
+; -------------------------------
 Int Property FLOW_NONE = 0 AutoReadOnly
 Int Property FLOW_PRECOMBAT = 1 AutoReadOnly
 Int Property FLOW_BLEEDOUT = 2 AutoReadOnly
@@ -26,27 +57,9 @@ Int Property FLOW_CREATURE_TRUCE = 8 AutoReadOnly
 Int Property FLOW_AFTERPLEASURE = 9 AutoReadOnly
 Int Property FLOW_INCOMBAT = 10 AutoReadOnly
 
-Int Property OUTCOME_NONE = 0 AutoReadOnly
-Int Property OUTCOME_KIDNAP = 1 AutoReadOnly
-Int Property OUTCOME_PAY = 2 AutoReadOnly
-Int Property OUTCOME_FIGHT = 3 AutoReadOnly
-Int Property OUTCOME_RECRUIT = 4 AutoReadOnly
-Int Property OUTCOME_JOIN_ENEMY = 5 AutoReadOnly
-Int Property OUTCOME_RELEASE = 6 AutoReadOnly
-Int Property OUTCOME_PLEASURE = 7 AutoReadOnly
-Int Property OUTCOME_FOLLOW_PLAYER = 8 AutoReadOnly
-Int Property OUTCOME_DO_NOTHING = 9 AutoReadOnly
-Int Property OUTCOME_WORK = 10 AutoReadOnly
-Int Property OUTCOME_LOOT_ENEMY = 11 AutoReadOnly
-Int Property OUTCOME_KILL_ENEMY = 12 AutoReadOnly
-Int Property OUTCOME_THANKS = 13 AutoReadOnly
-Int Property OUTCOME_EXTEND_CONTRACT = 14 AutoReadOnly
-Int Property OUTCOME_TERMINATE_CONTRACT = 15 AutoReadOnly
-
 ; -------------------------------
-; Route recorder v2 (transitional)
-; Choice = literal player/system choice
-; Result = resolved gameplay result after context evaluation
+; Entry / method / branch constants
+; Kept for shell quest compatibility only
 ; -------------------------------
 Int Property ENTRY_NONE = 0 AutoReadOnly
 Int Property ENTRY_HOTKEY = 1 AutoReadOnly
@@ -54,10 +67,6 @@ Int Property ENTRY_FORCEGREET = 2 AutoReadOnly
 Int Property ENTRY_CAPTIVE_CALL = 3 AutoReadOnly
 Int Property ENTRY_AUTO = 4 AutoReadOnly
 Int Property ENTRY_SCENE_RETURN = 5 AutoReadOnly
-Int Property ENTRY_KIDNAP_TELEPORT = 6 AutoReadOnly
-Int Property ENTRY_BLEED_DO_NOTHING_MARKER = 7 AutoReadOnly
-Int Property ENTRY_BLEED_DIALOG_CLOSE_MARKER = 8 AutoReadOnly
-Int Property ENTRY_BLEED_BLACKOUT = 9 AutoReadOnly
 
 Int Property METHOD_NONE = 0 AutoReadOnly
 Int Property METHOD_DIRECT = 1 AutoReadOnly
@@ -68,241 +77,321 @@ Int Property BRANCH_NONE = 0 AutoReadOnly
 Int Property BRANCH_MAIN = 1 AutoReadOnly
 Int Property BRANCH_PAY = 2 AutoReadOnly
 Int Property BRANCH_PLEASURE = 3 AutoReadOnly
-Int Property BRANCH_RELEASE_CONFIRM = 10 AutoReadOnly
-Int Property BRANCH_FOLLOW_CONFIRM = 11 AutoReadOnly
-Int Property BRANCH_JOIN_ME_CONFIRM = 12 AutoReadOnly
-Int Property BRANCH_JOIN_ENEMY_CONFIRM = 13 AutoReadOnly
-Int Property BRANCH_FIGHT_CONFIRM = 14 AutoReadOnly
-Int Property BRANCH_KIDNAP_CONFIRM = 15 AutoReadOnly
-Int Property BRANCH_WORK_CONFIRM = 16 AutoReadOnly
-Int Property BRANCH_DO_NOTHING_CONFIRM = 17 AutoReadOnly
 
-Int Property STAGE_NONE = 0 AutoReadOnly
-Int Property STAGE_OPENED = 1 AutoReadOnly
-Int Property STAGE_NEGOTIATING = 2 AutoReadOnly
-Int Property STAGE_METHOD_SELECTED = 3 AutoReadOnly
-Int Property STAGE_CHOICE_COMMITTED = 4 AutoReadOnly
-Int Property STAGE_RESULT_RESOLVED = 5 AutoReadOnly
-Int Property STAGE_SCENE_START_PENDING = 6 AutoReadOnly
-Int Property STAGE_SCENE_ACTIVE = 7 AutoReadOnly
-Int Property STAGE_AWAIT_AFTERPLEASURE = 8 AutoReadOnly
-Int Property STAGE_CLOSED_RESOLVED = 9 AutoReadOnly
-Int Property STAGE_CLOSED_NO_COMMIT = 10 AutoReadOnly
-Int Property STAGE_ABORTED = 11 AutoReadOnly
-
+; -------------------------------
+; Choice constants
+; -------------------------------
 Int Property CHOICE_NONE = 0 AutoReadOnly
-Int Property CHOICE_FIGHT = 1 AutoReadOnly
-Int Property CHOICE_KIDNAP = 2 AutoReadOnly
-Int Property CHOICE_DO_NOTHING = 3 AutoReadOnly
-Int Property CHOICE_RELEASE_ME = 4 AutoReadOnly
-Int Property CHOICE_FOLLOW_ME = 5 AutoReadOnly
-Int Property CHOICE_JOIN_ME = 6 AutoReadOnly
+Int Property CHOICE_DO_NOTHING = 1 AutoReadOnly
+Int Property CHOICE_FIGHT = 2 AutoReadOnly
+Int Property CHOICE_PAY = 3 AutoReadOnly
+Int Property CHOICE_PLEASURE = 4 AutoReadOnly
+Int Property CHOICE_KIDNAP = 5 AutoReadOnly
+Int Property CHOICE_RELEASE = 6 AutoReadOnly
 Int Property CHOICE_JOIN_ENEMY = 7 AutoReadOnly
-Int Property CHOICE_WORK = 8 AutoReadOnly
-Int Property CHOICE_RECRUIT = 9 AutoReadOnly
-Int Property CHOICE_LOOT_ENEMY = 10 AutoReadOnly
-Int Property CHOICE_KILL_ENEMY = 11 AutoReadOnly
-Int Property CHOICE_THANKS = 12 AutoReadOnly
-Int Property CHOICE_EXTEND_CONTRACT = 13 AutoReadOnly
-Int Property CHOICE_TERMINATE_CONTRACT = 14 AutoReadOnly
-
-Int Property CHOICE_SOURCE_NONE = 0 AutoReadOnly
-Int Property CHOICE_SOURCE_EXPLICIT_DIALOG = 1 AutoReadOnly
-Int Property CHOICE_SOURCE_DIALOG_CLOSED_NO_COMMIT = 2 AutoReadOnly
-Int Property CHOICE_SOURCE_SCENE_CALLBACK = 3 AutoReadOnly
-Int Property CHOICE_SOURCE_SYSTEM_RESOLVE = 4 AutoReadOnly
-
-Int Property RESULT_NONE = 0 AutoReadOnly
-Int Property RESULT_RESUME_PRECOMBAT_HOSTILE = 1 AutoReadOnly
-Int Property RESULT_RESUME_INCOMBAT_HOSTILE = 2 AutoReadOnly
-Int Property RESULT_CAPTIVE = 3 AutoReadOnly
-Int Property RESULT_LEFT_FOR_DEAD = 4 AutoReadOnly
-Int Property RESULT_TEMP_RELEASE = 5 AutoReadOnly
-Int Property RESULT_TEMP_FOLLOW = 6 AutoReadOnly
-Int Property RESULT_JOIN_PLAYER = 7 AutoReadOnly
-Int Property RESULT_JOIN_ENEMY = 8 AutoReadOnly
-Int Property RESULT_WORK_STATE = 9 AutoReadOnly
-Int Property RESULT_RECRUIT_STATE = 10 AutoReadOnly
-Int Property RESULT_VICTORY_NEUTRAL_RELEASE = 11 AutoReadOnly
-Int Property RESULT_VICTORY_EXECUTION = 12 AutoReadOnly
-Int Property RESULT_VICTORY_LOOT = 13 AutoReadOnly
-Int Property RESULT_EXTEND_CONTRACT = 14 AutoReadOnly
-Int Property RESULT_TERMINATE_CONTRACT = 15 AutoReadOnly
-Int Property RESULT_CAPTIVE_IDLE = 16 AutoReadOnly
+Int Property CHOICE_RECRUIT = 8 AutoReadOnly
+Int Property CHOICE_FOLLOW_PLAYER = 9 AutoReadOnly
+Int Property CHOICE_WORK = 10 AutoReadOnly
+Int Property CHOICE_LOOT_ENEMY = 11 AutoReadOnly
+Int Property CHOICE_KILL_ENEMY = 12 AutoReadOnly
+Int Property CHOICE_THANKS = 13 AutoReadOnly
+Int Property CHOICE_EXTEND_CONTRACT = 14 AutoReadOnly
+Int Property CHOICE_TERMINATE_CONTRACT = 15 AutoReadOnly
+Int Property CHOICE_RETURN_CAPTIVE = 16 AutoReadOnly
+Int Property CHOICE_REDO_PLEASURE = 17 AutoReadOnly
 
 ; -------------------------------
-; Existing quest scripts in current baseline
+; Pleasure source constants
 ; -------------------------------
-Quest Property TFDPreCombatQuest Auto
-Quest Property TFDBleedoutQuest Auto
-Quest Property TFDPleasureQuest Auto
-Quest Property TFDDialogue Auto
-GlobalVariable Property TFDPayGold Auto
-MiscObject Property Gold001 Auto
+Int Property PLEASURE_SOURCE_NONE = 0 AutoReadOnly
+Int Property PLEASURE_SOURCE_PRECOMBAT = 1 AutoReadOnly
+Int Property PLEASURE_SOURCE_BLEEDOUT = 2 AutoReadOnly
+Int Property PLEASURE_SOURCE_CAPTIVE = 3 AutoReadOnly
+Int Property PLEASURE_SOURCE_VICTORY = 4 AutoReadOnly
+Int Property PLEASURE_SOURCE_TEAMMATE = 5 AutoReadOnly
 
 ; -------------------------------
-; Future / placeholder quest holders
+; Legacy event names
 ; -------------------------------
-Quest Property TFDCaptiveQuest Auto
-Quest Property TFDVictoryQuest Auto
-Quest Property TFDSaviorQuest Auto
-Quest Property TFDRecruitQuest Auto
-Quest Property TFDCreatureQuest Auto
-Quest Property TFDTruceQuest Auto
-Quest Property TFDCaptiveBridgeQuest Auto
-GlobalVariable Property TFDCaptiveState Auto
-GlobalVariable Property TFDCaptiveMarkerState Auto
+String Property EventPreCombatOutcomePay = "TFDPreCombatOutcomePay" Auto
+String Property EventPreCombatOutcomeFight = "TFDPreCombatOutcomeFight" Auto
+String Property EventPreCombatOutcomeCaptive = "TFDPreCombatOutcomeCaptive" Auto
+String Property EventPreCombatOutcomeJoinEnemy = "TFDPreCombatOutcomeJoinEnemy" Auto
+String Property EventPreCombatOutcomeRecruit = "TFDPreCombatOutcomeRecruit" Auto
+String Property EventPreCombatOutcomeRelease = "TFDPreCombatOutcomeRelease" Auto
+String Property EventPreCombatOutcomeFollow = "TFDPreCombatOutcomeFollow" Auto
+String Property EventPreCombatOutcomePleasure = "TFDPreCombatOutcomePleasure" Auto
+String Property EventPreCombatClearAll = "TFDPreCombatClearAll" Auto
+String Property EventPreCombatDialogueConfirmed = "TFDPreCombatDialogueConfirmed" Auto
 
+String Property EventInCombatOutcomePay = "TFDInCombatOutcomePay" Auto
+String Property EventInCombatOutcomePleasure = "TFDInCombatOutcomePleasure" Auto
+String Property EventInCombatOutcomeCaptive = "TFDInCombatOutcomeCaptive" Auto
+String Property EventInCombatOutcomeFight = "TFDInCombatOutcomeFight" Auto
+String Property EventInCombatOutcomeDoNothing = "TFDInCombatOutcomeDoNothing" Auto
+String Property EventInCombatOutcomeCancel = "TFDInCombatOutcomeCancel" Auto
+String Property EventInCombatOutcomeFailed = "TFDInCombatOutcomeFailed" Auto
+String Property EventInCombatOutcomeRelease = "TFDInCombatOutcomeRelease" Auto
+String Property EventInCombatOutcomeFollow = "TFDInCombatOutcomeFollow" Auto
+String Property EventInCombatOutcomeReset = "TFDInCombatOutcomeReset" Auto
+String Property EventInCombatClearAll = "TFDInCombatClearAll" Auto
+
+String Property EventBleedoutOutcomePay = "TFDBleedoutOutcomePay" Auto
+String Property EventBleedoutOutcomePleasure = "TFDBleedoutOutcomePleasure" Auto
+String Property EventBleedoutOutcomeCaptive = "TFDBleedoutOutcomeCaptive" Auto
+String Property EventBleedoutOutcomeRelease = "TFDBleedoutOutcomeRelease" Auto
+String Property EventBleedoutOutcomeReset = "TFDBleedoutOutcomeReset" Auto
+String Property EventBleedoutClearAll = "TFDBleedoutClearAll" Auto
+
+String Property EventTruceClearAll = "TFDTruceClearAll" Auto
+String Property EventPlayerSaviorClear = "TFDPlayerSaviorClear" Auto
+String Property EventHumanoidTeammateAssign = "TFDHumanoidTeammateAssign" Auto
+String Property EventCreatureTeammateAssign = "TFDCreatureTeammateAssign" Auto
+String Property EventCreatureTeammateUnassign = "TFDCreatureTeammateUnassign" Auto
+String Property EventPleasureOutcomeRelease = "TFDPleasureOutcomeRelease" Auto
+
+; Victory native bridge events. Internal variables, not CK properties.
+String EventVictoryDefeatedRecruit = "TFDDefeatedHumanoidRecruit"
+String EventVictoryRecoverDefeatedEnemy = "TFDVictoryRecoverDefeatedEnemy"
+String EventVictoryOutcomeRecruit = "TFDVictoryOutcomeRecruit"
+String EventVictoryOutcomeKill = "TFDVictoryOutcomeKill"
+String EventVictoryOutcomeLoot = "TFDVictoryOutcomeLoot"
+String EventVictoryOutcomeCancel = "TFDVictoryOutcomeCancel"
+String EventVictoryOutcomePleasure = "TFDVictoryOutcomePleasure"
+
+; Teammate native bridge events. Internal variables, not CK properties.
+String EventTeammateGreetStarted = "TFDTeammateGreetStarted"
+String EventTeammateExtendContractGold = "TFDTeammateExtendContractGold"
+String EventTeammateExtendContractPleasure = "TFDTeammateExtendContractPleasure"
+String EventTeammateRestoreHealthPotion = "TFDTeammateRestoreHealthPotion"
+String EventTeammateRestoreHealthPleasure = "TFDTeammateRestoreHealthPleasure"
+String EventTeammateTerminateContract = "TFDTeammateTerminateContract"
+
+; After pleasure / pleasure runtime
+String Property EventAfterPleasureChoiceFinish = "TFDAfterPleasureChoiceFinish" Auto
+String Property EventAfterPleasureChoiceRecruit = "TFDAfterPleasureChoiceRecruit" Auto
+String Property EventAfterPleasureChoiceJoinEnemy = "TFDAfterPleasureChoiceJoinEnemy" Auto
+String Property EventAfterPleasureChoicePleasure = "TFDAfterPleasureChoicePleasure" Auto
+String Property EventAfterPleasureChoiceRelease = "TFDAfterPleasureChoiceRelease" Auto
+String Property EventAfterPleasureChoiceWork = "TFDAfterPleasureChoiceWork" Auto
+String Property EventAfterPleasureChoiceKidnap = "TFDAfterPleasureChoiceKidnap" Auto
+String EventSystemEventClearAfterPleasure = "TFDSystemEventClearAfterPleasure"
+
+; Captive native outcome events. Internal variables, not CK properties.
+String EventCaptiveOutcomeWork = "TFDCaptiveOutcomeWork"
+String EventCaptiveOutcomeReturn = "TFDCaptiveOutcomeReturn"
+String EventCaptiveOutcomeRelease = "TFDCaptiveOutcomeRelease"
+String EventCaptiveOutcomeEscape = "TFDCaptiveOutcomeEscape"
+String EventCaptiveOutcomePleasure = "TFDCaptiveOutcomePleasure"
+String EventCaptiveOutcomeCancel = "TFDCaptiveOutcomeCancel"
+
+; Captive request events from PleasureQuest AfterPleasure.
+String EventCaptiveRequestWork = "TFDCaptiveRequestWork"
+String EventCaptiveRequestReturn = "TFDCaptiveRequestReturn"
+String EventCaptiveRequestRelease = "TFDCaptiveRequestRelease"
+String EventCaptiveRequestEscape = "TFDCaptiveRequestEscape"
+
+; -------------------------------
+; Local route state (very light)
+; -------------------------------
+Int CurrentFlowKind = 0
+Int CurrentEntryMode = 0
+Int CurrentMethod = 0
+Int CurrentBranch = 0
+Bool CurrentRouteActive = False
+Actor CurrentRouteSpeaker = None
+Bool CurrentGreetConfirmed = False
+
+; -------------------------------
+; Captive work compatibility state
+; Kept because there is no other owner yet
+; -------------------------------
 Float Property CaptiveWorkUpdateInterval = 0.50 Auto
 Int Property CAPTIVE_PHASE_NONE = 0 AutoReadOnly
 Int Property CAPTIVE_PHASE_CAPTIVE = 1 AutoReadOnly
 Int Property CAPTIVE_PHASE_ESCAPE = 2 AutoReadOnly
 Int Property CAPTIVE_PHASE_RELEASED_WORK = 3 AutoReadOnly
+GlobalVariable Property TFDCaptiveState Auto
 
 Actor CaptiveWorkSpeaker = None
 Location CaptiveWorkLocation = None
 Bool CaptiveWorkActive = False
 Int CurrentCaptivePhaseState = 0
 
-; -------------------------------
-; Route recorder runtime
-; -------------------------------
-Int CurrentRouteToken = 0
-Int CurrentRootFlow = 0
-Int CurrentEntryMode = 0
-Int CurrentMethod = 0
-Int CurrentBranch = 0
-Int CurrentRouteStage = 0
-Int CurrentChoice = 0
-Int CurrentChoiceSource = 0
-Int CurrentResolvedResult = 0
-
-Actor CurrentRouteSpeaker = None
-Float CurrentRouteStartedAt = 0.0
-
-Bool CurrentRouteActive = False
-Bool CurrentRouteSceneLocked = False
-Bool CurrentChoiceCommitted = False
-Bool CurrentResultCommitted = False
-String CurrentRouteReason = ""
-
-Bool Property ClearTransientDialoguesOnPlayerLoadGame = True Auto
-Bool Property PreserveCaptiveRuntimeOnPlayerLoadGame = True Auto
-Float Property HygienePostLoadRetryInterval = 0.75 Auto
-Int Property HygienePostLoadRetryCount = 4 Auto
-Int PendingHygienePostLoadRetries = 0
-
+; ============================================================
+; Init / load
+; ============================================================
 Event OnInit()
-	ClearCaptiveWorkState()
-	CurrentCaptivePhaseState = CAPTIVE_PHASE_NONE
-	RegisterRouteEvents()
-	RunTransientHygiene(False)
+	ClearBridgeState(False)
+	RegisterCaptiveRequestEvents()
 EndEvent
 
 Event OnPlayerLoadGame()
+	ClearBridgeState(False)
 	ClearCaptiveWorkState()
-	CurrentCaptivePhaseState = CAPTIVE_PHASE_NONE
-	ResetRouteRecorderState()
-	ClearActiveFlow()
-
-	If ClearTransientDialoguesOnPlayerLoadGame
-		ClearPreCombatFlow(None)
-		ClearBleedoutFlow(None)
-		ClearTruceFlow()
-		ClearInCombatFlow()
-	EndIf
-
-	TFDCaptiveBridge captiveCtrlLoad = GetCaptiveBridgeController()
-	If captiveCtrlLoad != None
-		If PreserveCaptiveRuntimeOnPlayerLoadGame
-			captiveCtrlLoad.ResetDialogueStateOnLoad()
-		Else
-			captiveCtrlLoad.ClearAll()
-		EndIf
-	EndIf
-
-	RegisterRouteEvents()
-	PendingHygienePostLoadRetries = HygienePostLoadRetryCount
-	RegisterForSingleUpdate(HygienePostLoadRetryInterval)
+	RegisterCaptiveRequestEvents()
 EndEvent
 
-Function RegisterRouteEvents()
-	RegisterForModEvent("TFDPreCombatAssign", "OnRouteBeginEvent")
-	RegisterForModEvent("TFDInCombatAssign", "OnRouteBeginEvent")
-	RegisterForModEvent("TFDBleedoutPrimeSpeaker", "OnRouteBeginEvent")
-	RegisterForModEvent("TFDBleedImplicitCloseNoCommit", "OnImplicitBleedCloseNoCommitEvent")
-EndFunction
-
-Function EnsureDialogueRouteFromEvent(Int aiFlow, Int aiEntryMode, Actor akSpeaker = None, String asReason = "")
-	If CurrentRouteActive && CurrentRootFlow == aiFlow
-		If akSpeaker == None || CurrentRouteSpeaker == akSpeaker
-			If CurrentRouteStage < STAGE_SCENE_START_PENDING
-				MarkDialogueNegotiating(akSpeaker, asReason)
-			EndIf
-			Return
-		EndIf
-	EndIf
-	BeginDialogueRoute(aiFlow, aiEntryMode, akSpeaker, asReason)
-	MarkDialogueNegotiating(akSpeaker, asReason)
-EndFunction
-
-Event OnRouteBeginEvent(String eventName, String strArg, Float numArg, Form sender)
-	Actor akSpeaker = sender as Actor
-	If eventName == "TFDPreCombatAssign"
-		EnsureDialogueRouteFromEvent(FLOW_PRECOMBAT, ENTRY_HOTKEY, akSpeaker, "mod_event_precombat_assign")
-	ElseIf eventName == "TFDInCombatAssign"
-		EnsureDialogueRouteFromEvent(FLOW_INCOMBAT, ENTRY_HOTKEY, akSpeaker, "mod_event_incombat_assign")
-	ElseIf eventName == "TFDBleedoutPrimeSpeaker"
-		EnsureDialogueRouteFromEvent(FLOW_BLEEDOUT, ENTRY_HOTKEY, akSpeaker, "mod_event_bleedout_prime")
+Event OnUpdate()
+	If CaptiveWorkActive
+		UpdateCaptiveWorkMode()
 	EndIf
 EndEvent
 
-Event OnImplicitBleedCloseNoCommitEvent(String eventName, String strArg, Float numArg, Form sender)
-	Actor akSpeaker = sender as Actor
-	RecordImplicitBleedoutCloseNoCommit(akSpeaker)
+Function RegisterCaptiveRequestEvents()
+	RegisterForModEvent(EventCaptiveRequestWork, "OnCaptiveRequestWork")
+	RegisterForModEvent(EventCaptiveRequestReturn, "OnCaptiveRequestReturn")
+	RegisterForModEvent(EventCaptiveRequestRelease, "OnCaptiveRequestRelease")
+	RegisterForModEvent(EventCaptiveRequestEscape, "OnCaptiveRequestEscape")
+	RegisterForModEvent(EventSystemEventClearAfterPleasure, "OnSystemEventClearAfterPleasure")
+EndFunction
+
+Event OnCaptiveRequestWork(String eventName, String strArg, Float numArg, Form sender)
+	Actor requestActor = ResolveCaptiveRequestActor(sender)
+	Trace("CaptiveRequestWork event=" + eventName + " sender=" + sender + " actor=" + requestActor + " arg=" + strArg)
+	Bool ok = ResolveCaptiveWorkChoice(requestActor)
+	Trace("CaptiveRequestWork result=" + BoolText(ok))
 EndEvent
 
-; -------------------------------
-; Typed accessors
-; -------------------------------
-TFDPreCombatQuestScript Function GetPreCombatController()
-	If TFDPreCombatQuest == None
-		Return None
+Event OnCaptiveRequestReturn(String eventName, String strArg, Float numArg, Form sender)
+	Actor requestActor = ResolveCaptiveRequestActor(sender)
+	Trace("CaptiveRequestReturn event=" + eventName + " sender=" + sender + " actor=" + requestActor + " arg=" + strArg)
+	Bool ok = ResolveCaptiveReturnChoice(requestActor)
+	Trace("CaptiveRequestReturn result=" + BoolText(ok))
+EndEvent
+
+Event OnCaptiveRequestRelease(String eventName, String strArg, Float numArg, Form sender)
+	Actor requestActor = ResolveCaptiveRequestActor(sender)
+	Trace("CaptiveRequestRelease event=" + eventName + " sender=" + sender + " actor=" + requestActor + " arg=" + strArg)
+	Bool ok = ResolveCaptiveReleaseChoice(requestActor, "captive_after_pleasure_release")
+	Trace("CaptiveRequestRelease result=" + BoolText(ok))
+EndEvent
+
+Event OnCaptiveRequestEscape(String eventName, String strArg, Float numArg, Form sender)
+	Actor requestActor = ResolveCaptiveRequestActor(sender)
+	Trace("CaptiveRequestEscape event=" + eventName + " sender=" + sender + " actor=" + requestActor + " arg=" + strArg)
+	Bool ok = ResolveCaptiveEscapeChoice(requestActor)
+	Trace("CaptiveRequestEscape result=" + BoolText(ok))
+EndEvent
+
+Event OnSystemEventClearAfterPleasure(String eventName, String strArg, Float numArg, Form sender)
+	Trace("SystemEventClearAfterPleasure event=" + eventName + " arg=" + strArg + " sender=" + sender + " flow=" + CurrentFlowKind + " active=" + BoolText(CurrentRouteActive))
+	If CurrentFlowKind == FLOW_AFTERPLEASURE || CurrentFlowKind == FLOW_NONE || CurrentFlowKind == FLOW_RECRUIT_CONTRACT || !CurrentRouteActive
+		FinalizeTerminalDialogueRoute("after_pleasure_clear_event")
+	Else
+		Trace("SystemEventClearAfterPleasure skipped reason=foreign_active_flow flow=" + CurrentFlowKind)
 	EndIf
-	Return TFDPreCombatQuest as TFDPreCombatQuestScript
+EndEvent
+
+Actor Function ResolveCaptiveRequestActor(Form akSender)
+	Actor speakerRef = akSender as Actor
+	If IsActorValid(speakerRef)
+		Return speakerRef
+	EndIf
+	Return ResolveCaptiveActor(None)
 EndFunction
 
-TFDBleedoutQuestScript Function GetBleedoutController()
-	If TFDBleedoutQuest == None
-		Return None
+; ============================================================
+; Debug
+; ============================================================
+Function Trace(String asMsg)
+	If !EnableDebugTrace
+		Return
 	EndIf
-	Return TFDBleedoutQuest as TFDBleedoutQuestScript
+	Debug.Trace("[TFD][SystemEventCompat] " + asMsg)
 EndFunction
 
-TFDPleasureQuestScript Function GetPleasureController()
-	If TFDPleasureQuest == None
-		Return None
+String Function BoolText(Bool abValue)
+	If abValue
+		Return "true"
 	EndIf
-	Return TFDPleasureQuest as TFDPleasureQuestScript
+	Return "false"
 EndFunction
 
-TFDCaptiveBridge Function GetCaptiveBridgeController()
-	If TFDCaptiveBridgeQuest == None
+; ============================================================
+; Alias helpers
+; ============================================================
+Actor Function GetActiveSpeaker()
+	If ActiveSpeaker == None
 		Return None
 	EndIf
-	Return TFDCaptiveBridgeQuest as TFDCaptiveBridge
+	Return ActiveSpeaker.GetReference() as Actor
 EndFunction
 
-; -------------------------------
-; Context helpers
-; -------------------------------
-Function SetActiveFlow(Int aiFlow, Actor akSpeaker = None)
+ObjectReference Function GetPackageDriverRef()
+	If PackageDriver == None
+		Return None
+	EndIf
+	Return PackageDriver.GetReference()
+EndFunction
+
+Function SetActiveSpeaker(Actor akSpeaker)
+	CurrentRouteSpeaker = akSpeaker
+	If ActiveSpeaker == None
+		Return
+	EndIf
+	If akSpeaker == None
+		ActiveSpeaker.Clear()
+		Return
+	EndIf
+	ActiveSpeaker.ForceRefTo(akSpeaker)
+EndFunction
+
+Function ClearActiveSpeaker()
+	CurrentRouteSpeaker = None
 	If ActiveSpeaker != None
-		If akSpeaker != None
-			ActiveSpeaker.ForceRefTo(akSpeaker)
-		Else
-			ActiveSpeaker.Clear()
-		EndIf
+		ActiveSpeaker.Clear()
+	EndIf
+EndFunction
+
+Function SetPackageDriver(ObjectReference akDriver)
+	If PackageDriver == None
+		Return
+	EndIf
+	If akDriver == None
+		PackageDriver.Clear()
+		Return
+	EndIf
+	PackageDriver.ForceRefTo(akDriver)
+EndFunction
+
+Function ClearPackageDriver()
+	If PackageDriver != None
+		PackageDriver.Clear()
+	EndIf
+EndFunction
+
+Function ClearBridgeState(Bool abPreserveCaptiveWork = False)
+	ClearActiveSpeaker()
+	ClearPackageDriver()
+	CurrentRouteActive = False
+	CurrentGreetConfirmed = False
+	CurrentEntryMode = ENTRY_NONE
+	CurrentMethod = METHOD_NONE
+	CurrentBranch = BRANCH_NONE
+	If abPreserveCaptiveWork && CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
+		CurrentFlowKind = FLOW_CAPTIVE
+	Else
+		CurrentFlowKind = FLOW_NONE
+	EndIf
+EndFunction
+
+; ============================================================
+; Compatibility helpers for existing shell scripts
+; ============================================================
+Int Function GetActiveFlow()
+	Return CurrentFlowKind
+EndFunction
+
+Function SetActiveFlow(Int aiFlow, Actor akSpeaker = None)
+	CurrentFlowKind = aiFlow
+	If aiFlow == FLOW_NONE
+		CurrentGreetConfirmed = False
+	EndIf
+	If akSpeaker != None
+		SetActiveSpeaker(akSpeaker)
+	ElseIf aiFlow == FLOW_NONE
+		ClearActiveSpeaker()
 	EndIf
 EndFunction
 
@@ -310,796 +399,103 @@ Function ClearActiveFlow()
 	SetActiveFlow(FLOW_NONE, None)
 EndFunction
 
-Bool Function ShouldAllowCachedSpeakerFallback()
-	If CurrentRouteActive
-		Return True
-	EndIf
-
-	If CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
-		Return True
-	EndIf
-
-	Return False
-EndFunction
-
-Function FinalizeTerminalDialogueRoute(String asReason = "", Bool abPreserveCaptiveWorkSpeaker = False)
-	If CurrentRouteActive
-		CloseDialogueRouteResolved(asReason)
-	EndIf
-
-	ResetRouteRecorderState(True)
-
-	If abPreserveCaptiveWorkSpeaker && CaptiveWorkActive && CaptiveWorkSpeaker != None && !CaptiveWorkSpeaker.IsDead()
-		SetActiveFlow(FLOW_CAPTIVE, CaptiveWorkSpeaker)
-	Else
-		ClearActiveFlow()
-	EndIf
-EndFunction
-
-Function ResetRouteRecorderState(Bool abKeepToken = False)
-	If !abKeepToken
-		CurrentRouteToken = 0
-	EndIf
-	CurrentRouteActive = False
-	CurrentRouteSceneLocked = False
-	CurrentRootFlow = FLOW_NONE
-	CurrentEntryMode = ENTRY_NONE
-	CurrentMethod = METHOD_NONE
-	CurrentBranch = BRANCH_NONE
-	CurrentRouteStage = STAGE_NONE
-	CurrentChoice = CHOICE_NONE
-	CurrentChoiceSource = CHOICE_SOURCE_NONE
-	CurrentResolvedResult = RESULT_NONE
-	CurrentChoiceCommitted = False
-	CurrentResultCommitted = False
-	CurrentRouteSpeaker = None
-	CurrentRouteStartedAt = 0.0
-	CurrentRouteReason = ""
-EndFunction
-
-Bool Function IsActorStaleForFlow(Actor akActor)
-	If akActor == None
-		Return True
-	EndIf
-
-	If akActor.IsDead()
-		Return True
-	EndIf
-
-	Return False
-EndFunction
-
-Function RunTransientHygiene(Bool abAbortDeadRoute = True)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	TFDBleedoutQuestScript bleedCtrl = GetBleedoutController()
-	TFDCaptiveBridge captiveCtrl = GetCaptiveBridgeController()
-	Actor cachedSpeaker = GetCachedSpeaker()
-
-	If preCtrl != None
-		preCtrl.GetSpeaker()
-	EndIf
-
-	If bleedCtrl != None
-		bleedCtrl.GetSpeaker()
-	EndIf
-
-	If captiveCtrl != None
-		captiveCtrl.PruneStaleRuntimeRefs()
-	EndIf
-
-	If cachedSpeaker != None && cachedSpeaker.IsDead()
-		ClearActiveFlow()
-	EndIf
-
-	If abAbortDeadRoute && CurrentRouteSpeaker != None && CurrentRouteSpeaker.IsDead()
-		AbortDialogueRoute("hygiene_dead_route_speaker", CurrentRouteSpeaker)
-		ResetRouteRecorderState(True)
-	EndIf
-
-	If !CurrentRouteActive && !CaptiveWorkActive
-		If InferLiveFlow(None) == FLOW_NONE
-			ClearActiveFlow()
-		EndIf
-	EndIf
-EndFunction
-
-Function BeginDialogueRoute(Int aiFlow, Int aiEntryMode, Actor akSpeaker = None, String asReason = "")
-	CurrentRouteToken += 1
-	CurrentRouteActive = True
-	CurrentRouteSceneLocked = False
-	CurrentRootFlow = aiFlow
-	CurrentEntryMode = aiEntryMode
-	CurrentMethod = METHOD_NONE
-	CurrentBranch = BRANCH_MAIN
-	CurrentRouteStage = STAGE_OPENED
-	CurrentChoice = CHOICE_NONE
-	CurrentChoiceSource = CHOICE_SOURCE_NONE
-	CurrentResolvedResult = RESULT_NONE
-	CurrentChoiceCommitted = False
-	CurrentResultCommitted = False
-	CurrentRouteSpeaker = akSpeaker
-	CurrentRouteStartedAt = Utility.GetCurrentRealTime()
-	CurrentRouteReason = asReason
-	SetActiveFlow(aiFlow, akSpeaker)
-EndFunction
-
-Function MarkDialogueNegotiating(Actor akSpeaker = None, String asReason = "")
-	If !CurrentRouteActive
-		Return
-	EndIf
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	CurrentRouteStage = STAGE_NEGOTIATING
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-EndFunction
-
-Bool Function SetDialogueMethod(Int aiMethod, Actor akSpeaker = None, String asReason = "")
-	If !CurrentRouteActive
-		Return False
-	EndIf
-	CurrentMethod = aiMethod
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	CurrentRouteStage = STAGE_METHOD_SELECTED
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-	Return True
-EndFunction
-
-Function SetDialogueBranch(Int aiBranch, Actor akSpeaker = None, String asReason = "")
-	If !CurrentRouteActive
-		Return
-	EndIf
-	CurrentBranch = aiBranch
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-EndFunction
-
-Bool Function RecordDialogueChoice(Int aiChoice, Int aiChoiceSource, Actor akSpeaker = None, String asReason = "")
-	If !CurrentRouteActive
-		Return False
-	EndIf
-	CurrentChoice = aiChoice
-	CurrentChoiceSource = aiChoiceSource
-	CurrentChoiceCommitted = True
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	CurrentRouteStage = STAGE_CHOICE_COMMITTED
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-	Return True
-EndFunction
-
-Bool Function HasCaptiveMarkerForCurrentContext()
-	If TFDCaptiveMarkerState == None
-		Return False
-	EndIf
-	Return TFDCaptiveMarkerState.GetValueInt() != 0
-EndFunction
-
-Int Function ResolveChoiceToResult(Int aiFlow, Int aiMethod, Int aiChoice, Actor akSpeaker = None)
-	If aiChoice == CHOICE_NONE
-		Return RESULT_NONE
-	EndIf
-
-	If aiFlow == FLOW_PRECOMBAT
-		If aiChoice == CHOICE_FIGHT || aiChoice == CHOICE_DO_NOTHING
-			Return RESULT_RESUME_PRECOMBAT_HOSTILE
-		ElseIf aiChoice == CHOICE_KIDNAP
-			Return RESULT_CAPTIVE
-		ElseIf aiChoice == CHOICE_RELEASE_ME
-			Return RESULT_TEMP_RELEASE
-		ElseIf aiChoice == CHOICE_FOLLOW_ME
-			Return RESULT_TEMP_FOLLOW
-		ElseIf aiChoice == CHOICE_JOIN_ME
-			Return RESULT_JOIN_PLAYER
-		ElseIf aiChoice == CHOICE_JOIN_ENEMY
-			Return RESULT_JOIN_ENEMY
-		ElseIf aiChoice == CHOICE_RECRUIT
-			Return RESULT_RECRUIT_STATE
-		EndIf
-	ElseIf aiFlow == FLOW_INCOMBAT
-		If aiChoice == CHOICE_FIGHT || aiChoice == CHOICE_DO_NOTHING
-			Return RESULT_RESUME_INCOMBAT_HOSTILE
-		ElseIf aiChoice == CHOICE_KIDNAP
-			Return RESULT_CAPTIVE
-		ElseIf aiChoice == CHOICE_RELEASE_ME
-			Return RESULT_TEMP_RELEASE
-		ElseIf aiChoice == CHOICE_FOLLOW_ME
-			Return RESULT_TEMP_FOLLOW
-		ElseIf aiChoice == CHOICE_JOIN_ME
-			Return RESULT_JOIN_PLAYER
-		ElseIf aiChoice == CHOICE_JOIN_ENEMY
-			Return RESULT_JOIN_ENEMY
-		EndIf
-	ElseIf aiFlow == FLOW_BLEEDOUT
-		If aiChoice == CHOICE_KIDNAP
-			Return RESULT_CAPTIVE
-		ElseIf aiChoice == CHOICE_DO_NOTHING
-			If HasCaptiveMarkerForCurrentContext()
-				Return RESULT_CAPTIVE
-			EndIf
-			Return RESULT_LEFT_FOR_DEAD
-		ElseIf aiChoice == CHOICE_RELEASE_ME
-			Return RESULT_TEMP_RELEASE
-		ElseIf aiChoice == CHOICE_FOLLOW_ME
-			Return RESULT_TEMP_FOLLOW
-		EndIf
-	ElseIf aiFlow == FLOW_CAPTIVE
-		If aiChoice == CHOICE_WORK
-			Return RESULT_WORK_STATE
-		ElseIf aiChoice == CHOICE_DO_NOTHING
-			Return RESULT_CAPTIVE_IDLE
-		ElseIf aiChoice == CHOICE_RELEASE_ME
-			Return RESULT_TEMP_RELEASE
-		ElseIf aiChoice == CHOICE_FOLLOW_ME
-			Return RESULT_TEMP_FOLLOW
-		ElseIf aiChoice == CHOICE_JOIN_ME
-			Return RESULT_JOIN_PLAYER
-		ElseIf aiChoice == CHOICE_JOIN_ENEMY
-			Return RESULT_JOIN_ENEMY
-		EndIf
-	ElseIf aiFlow == FLOW_VICTORY
-		If aiChoice == CHOICE_RECRUIT
-			Return RESULT_RECRUIT_STATE
-		ElseIf aiChoice == CHOICE_LOOT_ENEMY
-			Return RESULT_VICTORY_LOOT
-		ElseIf aiChoice == CHOICE_KILL_ENEMY
-			Return RESULT_VICTORY_EXECUTION
-		ElseIf aiChoice == CHOICE_THANKS
-			Return RESULT_VICTORY_NEUTRAL_RELEASE
-		ElseIf aiChoice == CHOICE_EXTEND_CONTRACT
-			Return RESULT_EXTEND_CONTRACT
-		ElseIf aiChoice == CHOICE_TERMINATE_CONTRACT
-			Return RESULT_TERMINATE_CONTRACT
-		EndIf
-	EndIf
-
-	Return RESULT_NONE
-EndFunction
-
-Bool Function CommitResolvedResult(Int aiResult, Actor akSpeaker = None, String asReason = "")
-	If !CurrentRouteActive
-		Return False
-	EndIf
-	CurrentResolvedResult = aiResult
-	CurrentResultCommitted = True
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	CurrentRouteStage = STAGE_RESULT_RESOLVED
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-	Return True
-EndFunction
-
-Bool Function ResolveRecordedChoice(Actor akSpeaker = None, String asReason = "")
-	If !CurrentRouteActive
-		Return False
-	EndIf
-	If !CurrentChoiceCommitted
-		Return False
-	EndIf
-	Int resolved = ResolveChoiceToResult(CurrentRootFlow, CurrentMethod, CurrentChoice, akSpeaker)
-	Return CommitResolvedResult(resolved, akSpeaker, asReason)
-EndFunction
-
-Function MarkRouteSceneStartPending(Actor akSpeaker = None, String asReason = "")
-	If !CurrentRouteActive
-		Return
-	EndIf
-	CurrentRouteSceneLocked = True
-	CurrentRouteStage = STAGE_SCENE_START_PENDING
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-EndFunction
-
-Function MarkRouteSceneActive(Actor akSpeaker = None, String asReason = "")
-	If !CurrentRouteActive
-		Return
-	EndIf
-	CurrentRouteSceneLocked = True
-	CurrentRouteStage = STAGE_SCENE_ACTIVE
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-EndFunction
-
-Function CloseDialogueRouteResolved(String asReason = "")
-	If !CurrentRouteActive
-		Return
-	EndIf
-	CurrentRouteStage = STAGE_CLOSED_RESOLVED
-	CurrentRouteSceneLocked = False
-	CurrentRouteActive = False
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-EndFunction
-
-Function CloseDialogueRouteNoCommit(String asReason = "", Actor akSpeaker = None)
-	If !CurrentRouteActive
-		Return
-	EndIf
-	CurrentRouteStage = STAGE_CLOSED_NO_COMMIT
-	CurrentRouteSceneLocked = False
-	CurrentRouteActive = False
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-EndFunction
-
-Function AbortDialogueRoute(String asReason = "", Actor akSpeaker = None)
-	If !CurrentRouteActive
-		Return
-	EndIf
-	CurrentRouteStage = STAGE_ABORTED
-	CurrentRouteSceneLocked = False
-	CurrentRouteActive = False
-	If akSpeaker != None
-		CurrentRouteSpeaker = akSpeaker
-	EndIf
-	If asReason != ""
-		CurrentRouteReason = asReason
-	EndIf
-EndFunction
-
 Bool Function HasActiveDialogueRoute()
 	Return CurrentRouteActive
 EndFunction
 
-Bool Function HasCommittedChoice()
-	Return CurrentChoiceCommitted
-EndFunction
-
-Bool Function HasCommittedResult()
-	Return CurrentResultCommitted
-EndFunction
-
 Int Function GetCurrentRouteFlow()
-	Return CurrentRootFlow
+	Return CurrentFlowKind
 EndFunction
 
-Int Function GetCurrentRouteMethod()
-	Return CurrentMethod
+Function ResetRouteRecorderState(Bool abKeepToken = False)
+	CurrentRouteActive = False
+	CurrentGreetConfirmed = False
+	CurrentEntryMode = ENTRY_NONE
+	CurrentMethod = METHOD_NONE
+	CurrentBranch = BRANCH_NONE
+	If CurrentFlowKind != FLOW_CAPTIVE || !CaptiveWorkActive
+		CurrentFlowKind = FLOW_NONE
+	EndIf
+	If !CaptiveWorkActive
+		CurrentRouteSpeaker = None
+	EndIf
 EndFunction
 
-Int Function GetCurrentRouteBranch()
-	Return CurrentBranch
-EndFunction
-
-Int Function GetCurrentRouteStage()
-	Return CurrentRouteStage
-EndFunction
-
-Int Function GetCurrentChoice()
-	Return CurrentChoice
-EndFunction
-
-Int Function GetCurrentChoiceSource()
-	Return CurrentChoiceSource
-EndFunction
-
-Int Function GetCurrentResolvedResult()
-	Return CurrentResolvedResult
-EndFunction
-
-Int Function GetCurrentRouteToken()
-	Return CurrentRouteToken
-EndFunction
-
-Actor Function GetCurrentRouteSpeaker()
-	Return CurrentRouteSpeaker
-EndFunction
-
-Bool Function IsRouteSceneLocked()
-	Return CurrentRouteSceneLocked
-EndFunction
-
-Bool Function IsFallbackAllowed()
-	If !CurrentRouteActive
-		Return True
-	EndIf
-	Int stageValue = CurrentRouteStage
-	If stageValue == STAGE_METHOD_SELECTED || stageValue == STAGE_CHOICE_COMMITTED || stageValue == STAGE_RESULT_RESOLVED || stageValue == STAGE_SCENE_START_PENDING || stageValue == STAGE_SCENE_ACTIVE || stageValue == STAGE_AWAIT_AFTERPLEASURE
-		Return False
-	EndIf
-	Return True
-EndFunction
-
-Bool Function IsEscapeDetectionAllowed()
-	If !CurrentRouteActive
-		Return True
-	EndIf
-	Int stageValue = CurrentRouteStage
-	If stageValue == STAGE_SCENE_START_PENDING || stageValue == STAGE_SCENE_ACTIVE || stageValue == STAGE_AWAIT_AFTERPLEASURE
-		Return False
-	EndIf
-	Return True
-EndFunction
-
-Bool Function IsHostileRestoreAllowed()
-	If !CurrentRouteActive
-		Return True
-	EndIf
-	Int stageValue = CurrentRouteStage
-	If stageValue == STAGE_METHOD_SELECTED || stageValue == STAGE_CHOICE_COMMITTED || stageValue == STAGE_RESULT_RESOLVED || stageValue == STAGE_SCENE_START_PENDING || stageValue == STAGE_SCENE_ACTIVE || stageValue == STAGE_AWAIT_AFTERPLEASURE
-		Return False
-	EndIf
-	Return True
-EndFunction
-
-Int Function GetActiveFlow()
-	If CurrentRouteActive && CurrentRootFlow != FLOW_NONE
-		Return CurrentRootFlow
-	EndIf
-
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	If preCtrl != None
-		Actor preSpeaker = preCtrl.GetSpeaker()
-		If preSpeaker != None && !preSpeaker.IsDead()
-			Return FLOW_PRECOMBAT
-		EndIf
-	EndIf
-
-	TFDBleedoutQuestScript bleedCtrl = GetBleedoutController()
-	If bleedCtrl != None
-		Actor bleedSpeaker = bleedCtrl.GetSpeaker()
-		If bleedSpeaker != None && !bleedSpeaker.IsDead()
-			Return FLOW_BLEEDOUT
-		EndIf
-	EndIf
-
-	If IsCaptiveDialogueFlowLive()
-		TFDCaptiveBridge captiveCtrl = GetCaptiveBridgeController()
-		If captiveCtrl != None
-			Actor captiveSpeaker = captiveCtrl.GetResolveCaptor()
-			If captiveSpeaker != None && !captiveSpeaker.IsDead()
-				Return FLOW_CAPTIVE
-			EndIf
-		EndIf
-	EndIf
-
-	Return FLOW_NONE
-EndFunction
-
-Int Function InferLiveFlow(Actor akSpeaker = None)
-	If CurrentRouteActive && CurrentRootFlow != FLOW_NONE
-		Return CurrentRootFlow
-	EndIf
-
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	If preCtrl != None
-		Actor preSpeaker = preCtrl.GetSpeaker()
-		If preSpeaker != None && !preSpeaker.IsDead()
-			Return FLOW_PRECOMBAT
-		EndIf
-	EndIf
-
-	TFDBleedoutQuestScript bleedCtrl = GetBleedoutController()
-	If bleedCtrl != None
-		Actor bleedSpeaker = bleedCtrl.GetSpeaker()
-		If bleedSpeaker != None && !bleedSpeaker.IsDead()
-			Return FLOW_BLEEDOUT
-		EndIf
-	EndIf
-
-	If IsCaptiveDialogueFlowLive()
-		TFDCaptiveBridge captiveCtrl = GetCaptiveBridgeController()
-		If captiveCtrl != None
-			Actor captiveSpeaker = captiveCtrl.GetResolveCaptor()
-			If captiveSpeaker != None && !captiveSpeaker.IsDead()
-				Return FLOW_CAPTIVE
-			EndIf
-		EndIf
-	EndIf
-
-	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-	If chosenSpeaker != None && !chosenSpeaker.IsDead()
-		TFDPreCombatQuestScript preCtrl2 = GetPreCombatController()
-		If preCtrl2 != None
-			Actor preSpeaker2 = preCtrl2.GetSpeaker()
-			If preSpeaker2 == chosenSpeaker
-				Return FLOW_PRECOMBAT
-			EndIf
-		EndIf
-
-		TFDBleedoutQuestScript bleedCtrl2 = GetBleedoutController()
-		If bleedCtrl2 != None
-			Actor bleedSpeaker2 = bleedCtrl2.GetSpeaker()
-			If bleedSpeaker2 == chosenSpeaker
-				Return FLOW_BLEEDOUT
-			EndIf
-		EndIf
-
-		If IsCaptiveDialogueFlowLive()
-			TFDCaptiveBridge captiveCtrl2 = GetCaptiveBridgeController()
-			If captiveCtrl2 != None
-				Actor captiveSpeaker2 = captiveCtrl2.GetResolveCaptor()
-				If captiveSpeaker2 == chosenSpeaker
-					Return FLOW_CAPTIVE
-				EndIf
-			EndIf
-		EndIf
-	EndIf
-
-	Return FLOW_NONE
-EndFunction
-
-Actor Function GetCachedSpeaker()
-	If ActiveSpeaker == None
-		Return None
-	EndIf
-	Actor a = ActiveSpeaker.GetReference() as Actor
-	If a != None && a.IsDead()
-		ActiveSpeaker.Clear()
-		Return None
-	EndIf
-	Return a
-EndFunction
-
-Actor Function ResolvePinnedRouteSpeaker()
-	If !CurrentRouteActive
-		Return None
-	EndIf
-
-	If CurrentRouteSpeaker != None && !CurrentRouteSpeaker.IsDead()
-		Return CurrentRouteSpeaker
-	EndIf
-
-	Return None
-EndFunction
-
-Actor Function ResolveSpeaker(Actor akSpeaker)
-	Actor playerRef = Game.GetPlayer()
-
+Bool Function BeginDialogueRoute(Int aiFlow, Int aiEntryMode, Actor akSpeaker = None, String asReason = "")
+	CurrentRouteActive = True
+	CurrentGreetConfirmed = False
+	CurrentFlowKind = aiFlow
+	CurrentEntryMode = aiEntryMode
+	CurrentMethod = METHOD_NONE
+	CurrentBranch = BRANCH_NONE
 	If akSpeaker != None
-		If akSpeaker != playerRef && !akSpeaker.IsDead()
-			Return akSpeaker
-		EndIf
+		SetActiveSpeaker(akSpeaker)
 	EndIf
-
-	Actor routeSpeaker = ResolvePinnedRouteSpeaker()
-	If routeSpeaker != None
-		Return routeSpeaker
-	EndIf
-
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	If preCtrl != None
-		Actor preSpeaker = preCtrl.GetSpeaker()
-		If preSpeaker != None && !preSpeaker.IsDead()
-			Return preSpeaker
-		EndIf
-	EndIf
-
-	TFDBleedoutQuestScript bleedCtrl = GetBleedoutController()
-	If bleedCtrl != None
-		Actor bleedSpeaker = bleedCtrl.GetSpeaker()
-		If bleedSpeaker != None && !bleedSpeaker.IsDead()
-			Return bleedSpeaker
-		EndIf
-	EndIf
-
-	If IsCaptiveDialogueFlowLive()
-		TFDCaptiveBridge captiveCtrl = GetCaptiveBridgeController()
-		If captiveCtrl != None
-			Actor captiveSpeaker = captiveCtrl.GetResolveCaptor()
-			If captiveSpeaker != None && !captiveSpeaker.IsDead()
-				Return captiveSpeaker
-			EndIf
-		EndIf
-	EndIf
-
-	If ShouldAllowCachedSpeakerFallback()
-		Actor cachedSpeaker = GetCachedSpeaker()
-		If cachedSpeaker != None && !cachedSpeaker.IsDead()
-			Return cachedSpeaker
-		EndIf
-	EndIf
-
-	Return None
-EndFunction
-
-Int Function ResolveExplicitDialogueFlow(Actor akSpeaker = None)
-	Int flow = GetActiveFlow()
-	If flow != FLOW_NONE
-		Return flow
-	EndIf
-
-	If CurrentRouteActive && CurrentRootFlow != FLOW_NONE
-		Return CurrentRootFlow
-	EndIf
-
-	flow = InferLiveFlow(akSpeaker)
-	If flow != FLOW_NONE
-		Return flow
-	EndIf
-
-	Return FLOW_NONE
-EndFunction
-
-Bool Function EnsureExplicitDialogueRoute(Actor akSpeaker = None, String asReason = "")
-	Int flow = ResolveExplicitDialogueFlow(akSpeaker)
-	Actor chosenSpeaker = akSpeaker
-
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		chosenSpeaker = ResolvePinnedRouteSpeaker()
-	EndIf
-
-	If flow == FLOW_NONE
-		Debug.Trace("TFDSystemEventQuestScript: EnsureExplicitDialogueRoute failed flow=NONE reason=" + asReason)
-		Return False
-	EndIf
-
-	If !CurrentRouteActive || CurrentRootFlow != flow
-		BeginDialogueRoute(flow, ENTRY_FORCEGREET, chosenSpeaker, asReason)
-	EndIf
-
-	MarkDialogueNegotiating(chosenSpeaker, asReason)
-
-	If chosenSpeaker != None && !chosenSpeaker.IsDead()
-		CurrentRouteSpeaker = chosenSpeaker
-		SetActiveFlow(flow, chosenSpeaker)
-	ElseIf CurrentRouteSpeaker != None && !CurrentRouteSpeaker.IsDead()
-		SetActiveFlow(flow, CurrentRouteSpeaker)
-	EndIf
-
+	Trace("BeginDialogueRoute flow=" + aiFlow + " reason=" + asReason)
 	Return True
 EndFunction
 
-Float Function GetGraceOutcomeDuration()
-	Return 10.0
+Function MarkDialogueNegotiating(Actor akSpeaker = None, String asReason = "")
+	CurrentRouteActive = True
+	If akSpeaker != None
+		SetActiveSpeaker(akSpeaker)
+	EndIf
+	Trace("MarkDialogueNegotiating flow=" + CurrentFlowKind + " reason=" + asReason)
 EndFunction
 
-Function EmitReleaseGraceEventForFlow(Int aiFlow, Actor akSpeaker)
-	If akSpeaker == None || akSpeaker.IsDead()
-		Return
+Bool Function SetDialogueMethod(Int aiMethod, Actor akSpeaker = None, String asReason = "")
+	CurrentMethod = aiMethod
+	If akSpeaker != None
+		SetActiveSpeaker(akSpeaker)
 	EndIf
-
-	Float useDuration = GetGraceOutcomeDuration()
-
-	If aiFlow == FLOW_INCOMBAT
-		SendModEvent("TFDInCombatOutcomeRelease", ActorFormIDString(akSpeaker), useDuration)
-	EndIf
+	Return True
 EndFunction
 
-Function EmitFollowGraceEventForFlow(Int aiFlow, Actor akSpeaker)
-	If akSpeaker == None || akSpeaker.IsDead()
-		Return
+Bool Function SetDialogueBranch(Int aiBranch, Actor akSpeaker = None, String asReason = "")
+	CurrentBranch = aiBranch
+	If akSpeaker != None
+		SetActiveSpeaker(akSpeaker)
 	EndIf
-
-	Float useDuration = GetGraceOutcomeDuration()
-
-	If aiFlow == FLOW_INCOMBAT
-		SendModEvent("TFDInCombatOutcomeFollow", ActorFormIDString(akSpeaker), useDuration)
-	EndIf
+	Return True
 EndFunction
 
-Int Function ResolveSourceFlowForAfterPleasure()
-	TFDPleasureQuestScript pleasureCtrl = GetPleasureController()
-	If pleasureCtrl != None
-		Return pleasureCtrl.GetSource()
-	EndIf
-	Return FLOW_NONE
-EndFunction
-
-Function ClearPreCombatFlow(Actor akSpeaker = None)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor targetSpeaker = akSpeaker
-
-	If preCtrl != None
-		If targetSpeaker == None
-			targetSpeaker = preCtrl.GetSpeaker()
-		EndIf
-
-		If targetSpeaker != None
-			preCtrl.ClearSpeakerForActor(targetSpeaker)
-		Else
-			preCtrl.ClearSpeaker()
-		EndIf
-
-		preCtrl.ClearBridge()
-	Else
-		SendModEvent("TFDPreCombatClearAll")
-	EndIf
-EndFunction
-
-Function ClearBleedoutFlow(Actor akSpeaker = None)
-	TFDBleedoutQuestScript bleedCtrl = GetBleedoutController()
-	Actor targetSpeaker = akSpeaker
-
-	If bleedCtrl != None
-		If targetSpeaker == None
-			targetSpeaker = bleedCtrl.GetSpeaker()
-		EndIf
-
-		If targetSpeaker != None
-			bleedCtrl.ClearSpeakerForActor(targetSpeaker)
-		Else
-			bleedCtrl.ClearSpeaker()
-		EndIf
-	EndIf
-
-	SendModEvent("TFDBleedoutClearAll")
-EndFunction
-
-Function ClearTruceFlow()
-	SendModEvent("TFDTruceClearAll")
-EndFunction
-
-Function ClearInCombatFlow()
-	SendModEvent("TFDInCombatClearAll")
-EndFunction
-
-Function ClearCaptiveDialogueFlow(Bool abClearRuntimeRefs = False, Bool abApplyCooldown = False)
-	TFDCaptiveBridge captiveCtrl = GetCaptiveBridgeController()
-	If captiveCtrl == None
-		Return
-	EndIf
-
-	captiveCtrl.CommitCaptiveChoice()
-
-	If abClearRuntimeRefs
-		captiveCtrl.ClearAll()
-	ElseIf abApplyCooldown
-		captiveCtrl.ReleaseOwnedCaptor()
-	Else
-		captiveCtrl.ReleaseOwnedCaptorNoCooldown()
-	EndIf
+Function FinalizeTerminalDialogueRoute(String asReason = "", Bool abPreserveCaptiveWorkSpeaker = False)
+	Trace("FinalizeTerminalDialogueRoute reason=" + asReason)
+	ClearBridgeState(abPreserveCaptiveWorkSpeaker)
 EndFunction
 
 Function ClearTransientDialogueBridges()
-	ClearPreCombatFlow(None)
-	ClearBleedoutFlow(None)
-	ClearTruceFlow()
-	ClearInCombatFlow()
+	SendQuestEvent(EventTruceClearAll)
+	SendQuestEvent(EventBleedoutClearAll)
+	SendQuestEvent(EventPreCombatClearAll)
+	SendQuestEvent(EventInCombatClearAll)
 EndFunction
 
-Bool Function IsCaptiveDialogueFlowLive()
-	If TFDCaptiveState == None
+; ============================================================
+; Generic helpers
+; ============================================================
+Actor Function ResolveSpeaker(Actor akSpeaker = None)
+	If IsActorValid(akSpeaker)
+		Return akSpeaker
+	EndIf
+	Actor active = GetActiveSpeaker()
+	If IsActorValid(active)
+		Return active
+	EndIf
+	If IsActorValid(CurrentRouteSpeaker)
+		Return CurrentRouteSpeaker
+	EndIf
+	Return None
+EndFunction
+
+Bool Function IsActorValid(Actor akActor)
+	If akActor == None
 		Return False
 	EndIf
-
-	Int captiveState = TFDCaptiveState.GetValueInt()
-	If captiveState != 1
+	If akActor.IsDead()
 		Return False
 	EndIf
-
-	If CaptiveWorkActive
-		Return False
-	EndIf
-
-	If CurrentCaptivePhaseState == CAPTIVE_PHASE_ESCAPE || CurrentCaptivePhaseState == CAPTIVE_PHASE_RELEASED_WORK
-		Return False
-	EndIf
-
 	Return True
-EndFunction
-
-Function SetCaptivePhaseValue(Int aiPhase)
-	CurrentCaptivePhaseState = aiPhase
 EndFunction
 
 String Function ActorFormIDString(Actor akActor)
@@ -1109,36 +505,1256 @@ String Function ActorFormIDString(Actor akActor)
 	Return akActor.GetFormID() as String
 EndFunction
 
-Bool Function IsAfterPleasureRouteLive()
-	If CurrentRouteActive && CurrentRootFlow == FLOW_AFTERPLEASURE
+Int Function GetPayAmount()
+	If TFDPayGold == None
+		Return 0
+	EndIf
+	Int payAmount = TFDPayGold.GetValueInt()
+	If payAmount < 0
+		payAmount = 0
+	EndIf
+	Return payAmount
+EndFunction
+
+Bool Function TransferPayToSpeaker(Actor akSpeaker)
+	Actor playerRef = Game.GetPlayer()
+	Int payAmount = GetPayAmount()
+
+	If playerRef == None
+		Return False
+	EndIf
+	If Gold001 == None
+		Return False
+	EndIf
+	If !IsActorValid(akSpeaker)
+		Return False
+	EndIf
+	If payAmount <= 0
+		Return False
+	EndIf
+
+	playerRef.RemoveItem(Gold001, payAmount, True, akSpeaker)
+	Return True
+EndFunction
+
+Function DispatchLegacyEvent(String asEventName, Actor akSpeaker = None, String asStrArg = "", Float afNumArg = 0.0)
+	If asEventName == ""
+		Return
+	EndIf
+
+	If akSpeaker != None
+		akSpeaker.SendModEvent(asEventName, asStrArg, afNumArg)
+	Else
+		SendModEvent(asEventName, asStrArg, afNumArg)
+	EndIf
+EndFunction
+
+Function SendQuestEvent(String asEventName)
+	If asEventName == ""
+		Return
+	EndIf
+	SendModEvent(asEventName)
+EndFunction
+
+Bool Function IsPreCombatRootChoice(Int aiChoiceKind)
+	If aiChoiceKind == CHOICE_KIDNAP || aiChoiceKind == CHOICE_PAY || aiChoiceKind == CHOICE_FIGHT || aiChoiceKind == CHOICE_DO_NOTHING || aiChoiceKind == CHOICE_PLEASURE
+		Return True
+	EndIf
+	Return False
+EndFunction
+
+Bool Function IsPreCombatPayChoice(Int aiChoiceKind)
+	If aiChoiceKind == CHOICE_RELEASE || aiChoiceKind == CHOICE_RECRUIT || aiChoiceKind == CHOICE_JOIN_ENEMY || aiChoiceKind == CHOICE_FOLLOW_PLAYER
+		Return True
+	EndIf
+	Return False
+EndFunction
+
+Bool Function IsInCombatRootChoice(Int aiChoiceKind)
+	If aiChoiceKind == CHOICE_KIDNAP || aiChoiceKind == CHOICE_PAY || aiChoiceKind == CHOICE_FIGHT || aiChoiceKind == CHOICE_DO_NOTHING || aiChoiceKind == CHOICE_PLEASURE
+		Return True
+	EndIf
+	Return False
+EndFunction
+
+Bool Function IsInCombatPayChoice(Int aiChoiceKind)
+	If aiChoiceKind == CHOICE_RELEASE || aiChoiceKind == CHOICE_RECRUIT || aiChoiceKind == CHOICE_JOIN_ENEMY || aiChoiceKind == CHOICE_FOLLOW_PLAYER
+		Return True
+	EndIf
+	Return False
+EndFunction
+
+Bool Function TryLateConfirmPreCombatChoice(Int aiChoiceKind, Actor akSpeaker = None)
+	If CurrentGreetConfirmed
 		Return True
 	EndIf
 
-	If GetActiveFlow() == FLOW_AFTERPLEASURE
+	If CurrentFlowKind != FLOW_PRECOMBAT || !CurrentRouteActive
+		Return False
+	EndIf
+
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		Return False
+	EndIf
+
+	If CurrentRouteSpeaker != None && chosenSpeaker != CurrentRouteSpeaker
+		Trace("PreCombatLateConfirmFromChoice rejected reason=speaker_mismatch choice=" + aiChoiceKind + " speaker=" + chosenSpeaker + " routeSpeaker=" + CurrentRouteSpeaker)
+		Return False
+	EndIf
+
+	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
+	If preCtrl == None
+		Trace("PreCombatLateConfirmFromChoice rejected reason=no_precombat_controller choice=" + aiChoiceKind + " speaker=" + chosenSpeaker)
+		Return False
+	EndIf
+
+	Bool stageOk = False
+	If CurrentMethod == METHOD_NONE && CurrentBranch == BRANCH_NONE && IsPreCombatRootChoice(aiChoiceKind)
+		stageOk = preCtrl.IsRootSessionValidForActor(chosenSpeaker)
+	ElseIf CurrentMethod == METHOD_PAY && CurrentBranch == BRANCH_PAY && IsPreCombatPayChoice(aiChoiceKind)
+		stageOk = preCtrl.IsPayBranchSessionValidForActor(chosenSpeaker)
+	EndIf
+
+	If !stageOk
+		Trace("PreCombatLateConfirmFromChoice rejected reason=stage_mismatch choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch + " speaker=" + chosenSpeaker)
+		Return False
+	EndIf
+
+	CurrentGreetConfirmed = True
+	Trace("PreCombatLateConfirmFromChoice accepted choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch + " speaker=" + chosenSpeaker)
+	DispatchLegacyEvent(EventPreCombatDialogueConfirmed, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	Return True
+EndFunction
+
+Bool Function TryLateConfirmInCombatChoice(Int aiChoiceKind, Actor akSpeaker = None)
+	If CurrentGreetConfirmed
+		Return True
+	EndIf
+
+	If CurrentFlowKind != FLOW_INCOMBAT || !CurrentRouteActive
+		Return False
+	EndIf
+
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		Return False
+	EndIf
+
+	If CurrentRouteSpeaker != None && chosenSpeaker != CurrentRouteSpeaker
+		Trace("InCombatLateConfirmFromChoice rejected reason=speaker_mismatch choice=" + aiChoiceKind + " speaker=" + chosenSpeaker + " routeSpeaker=" + CurrentRouteSpeaker)
+		Return False
+	EndIf
+
+	TFDInCombatQuestScript inCtrl = GetInCombatController()
+	If inCtrl == None
+		Trace("InCombatLateConfirmFromChoice rejected reason=no_incombat_controller choice=" + aiChoiceKind + " speaker=" + chosenSpeaker)
+		Return False
+	EndIf
+
+	Bool stageOk = False
+	If CurrentMethod == METHOD_NONE && CurrentBranch == BRANCH_NONE && IsInCombatRootChoice(aiChoiceKind)
+		stageOk = inCtrl.IsRootSessionValidForActor(chosenSpeaker)
+	ElseIf CurrentMethod == METHOD_PAY && CurrentBranch == BRANCH_PAY && IsInCombatPayChoice(aiChoiceKind)
+		stageOk = inCtrl.IsPayBranchSessionValidForActor(chosenSpeaker)
+	EndIf
+
+	If !stageOk
+		Trace("InCombatLateConfirmFromChoice rejected reason=stage_mismatch choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch + " speaker=" + chosenSpeaker)
+		Return False
+	EndIf
+
+	CurrentGreetConfirmed = True
+	inCtrl.NoteDialogueOpened(chosenSpeaker, "late_confirm_choice")
+	Trace("InCombatLateConfirmFromChoice accepted choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch + " speaker=" + chosenSpeaker)
+	Return True
+EndFunction
+
+Bool Function IsPreCombatChoiceAllowed(Int aiChoiceKind, Actor akSpeaker = None)
+	If CurrentFlowKind != FLOW_PRECOMBAT
+		Return True
+	EndIf
+
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If !CurrentRouteActive
+		Trace("RejectPreCombatChoice reason=route_inactive choice=" + aiChoiceKind + " choiceSpeaker=" + chosenSpeaker)
+		Return False
+	EndIf
+
+	If chosenSpeaker == None
+		Trace("RejectPreCombatChoice reason=no_speaker choice=" + aiChoiceKind)
+		Return False
+	EndIf
+
+	If CurrentRouteSpeaker != None && chosenSpeaker != CurrentRouteSpeaker
+		Trace("RejectPreCombatChoice reason=speaker_mismatch choice=" + aiChoiceKind + " speaker=" + chosenSpeaker + " routeSpeaker=" + CurrentRouteSpeaker)
+		Return False
+	EndIf
+
+	If !CurrentGreetConfirmed && !TryLateConfirmPreCombatChoice(aiChoiceKind, chosenSpeaker)
+		Trace("RejectPreCombatChoice reason=greet_not_confirmed choice=" + aiChoiceKind + " choiceSpeaker=" + chosenSpeaker + " method=" + CurrentMethod + " branch=" + CurrentBranch)
+		Return False
+	EndIf
+
+	Bool isRootStage = (CurrentMethod == METHOD_NONE && CurrentBranch == BRANCH_NONE)
+	Bool isPayStage = (CurrentMethod == METHOD_PAY && CurrentBranch == BRANCH_PAY)
+
+	If isRootStage
+		If aiChoiceKind == CHOICE_KIDNAP || aiChoiceKind == CHOICE_PAY || aiChoiceKind == CHOICE_FIGHT || aiChoiceKind == CHOICE_DO_NOTHING || aiChoiceKind == CHOICE_PLEASURE
+			Return True
+		EndIf
+		Trace("RejectPreCombatChoice reason=root_choice_not_allowed choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch)
+		Return False
+	EndIf
+
+	If isPayStage
+		If aiChoiceKind == CHOICE_RELEASE || aiChoiceKind == CHOICE_RECRUIT || aiChoiceKind == CHOICE_JOIN_ENEMY || aiChoiceKind == CHOICE_FOLLOW_PLAYER
+			Return True
+		EndIf
+		Trace("RejectPreCombatChoice reason=pay_choice_not_allowed choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch)
+		Return False
+	EndIf
+
+	Trace("RejectPreCombatChoice reason=unexpected_stage choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch)
+	Return False
+EndFunction
+
+Bool Function IsInCombatChoiceAllowed(Int aiChoiceKind, Actor akSpeaker = None)
+	If CurrentFlowKind != FLOW_INCOMBAT
+		Return True
+	EndIf
+
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If !CurrentRouteActive
+		Trace("RejectInCombatChoice reason=route_inactive choice=" + aiChoiceKind + " choiceSpeaker=" + chosenSpeaker)
+		Return False
+	EndIf
+
+	If chosenSpeaker == None
+		Trace("RejectInCombatChoice reason=no_speaker choice=" + aiChoiceKind)
+		Return False
+	EndIf
+
+	If !CurrentGreetConfirmed && !TryLateConfirmInCombatChoice(aiChoiceKind, chosenSpeaker)
+		Trace("RejectInCombatChoice reason=greet_not_confirmed choice=" + aiChoiceKind + " choiceSpeaker=" + chosenSpeaker + " method=" + CurrentMethod + " branch=" + CurrentBranch)
+		Return False
+	EndIf
+
+	If CurrentRouteSpeaker != None && chosenSpeaker != CurrentRouteSpeaker
+		Trace("RejectInCombatChoice reason=speaker_mismatch choice=" + aiChoiceKind + " speaker=" + chosenSpeaker + " routeSpeaker=" + CurrentRouteSpeaker)
+		Return False
+	EndIf
+
+	Bool isRootStage = (CurrentMethod == METHOD_NONE && CurrentBranch == BRANCH_NONE)
+	Bool isPayStage = (CurrentMethod == METHOD_PAY && CurrentBranch == BRANCH_PAY)
+
+	If isRootStage
+		If IsInCombatRootChoice(aiChoiceKind)
+			Return True
+		EndIf
+		Trace("RejectInCombatChoice reason=root_choice_not_allowed choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch)
+		Return False
+	EndIf
+
+	If isPayStage
+		If IsInCombatPayChoice(aiChoiceKind)
+			Return True
+		EndIf
+		Trace("RejectInCombatChoice reason=pay_choice_not_allowed choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch)
+		Return False
+	EndIf
+
+	Trace("RejectInCombatChoice reason=unexpected_stage choice=" + aiChoiceKind + " method=" + CurrentMethod + " branch=" + CurrentBranch)
+	Return False
+EndFunction
+
+Int Function InferFlowFromSpeaker(Actor akSpeaker = None)
+	If CurrentFlowKind != FLOW_NONE
+		Return CurrentFlowKind
+	EndIf
+	If CaptiveWorkActive
+		Return FLOW_CAPTIVE
+	EndIf
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker != None && TFDDefeatedFaction != None
+		If chosenSpeaker.IsInFaction(TFDDefeatedFaction)
+			Return FLOW_VICTORY
+		EndIf
+	EndIf
+	If chosenSpeaker != None && TFDTeammateFaction != None
+		If chosenSpeaker.IsInFaction(TFDTeammateFaction)
+			Return FLOW_RECRUIT_CONTRACT
+		EndIf
+	EndIf
+	Return FLOW_NONE
+EndFunction
+
+; ============================================================
+; Controller helpers
+; ============================================================
+TFDPreCombatQuestScript Function GetPreCombatController()
+	Return TFDPreCombatQuest
+EndFunction
+
+TFDInCombatQuestScript Function GetInCombatController()
+	Return TFDInCombatQuest
+EndFunction
+
+TFDBleedoutQuestScript Function GetBleedoutController()
+	Return TFDBleedoutQuest
+EndFunction
+
+TFDCaptiveBridge Function GetCaptiveController()
+	Return TFDCaptiveQuest
+EndFunction
+
+TFDPleasureQuestScript Function GetPleasureController()
+	Return TFDPleasureQuest
+EndFunction
+
+TFDPlayerTeammateQuestScript Function GetTeammateController()
+	Return TFDPlayerTeammateQuest
+EndFunction
+
+Bool Function ShouldBlockTeammateGreetDuringPleasure(Actor akSpeaker = None)
+	TFDPleasureQuestScript pleasureCtrl = GetPleasureController()
+	If pleasureCtrl == None
+		Return False
+	EndIf
+
+	If pleasureCtrl.ShouldBlockTeammateGreet(akSpeaker)
+		Trace("RejectTeammateGreet reason=pleasure_active speaker=" + akSpeaker)
 		Return True
 	EndIf
 
 	Return False
 EndFunction
 
-Function SendAfterPleasureChoiceEvent(String asEventName, Actor akSpeaker = None)
-	If asEventName == ""
-		Return
-	EndIf
-
-	If !IsAfterPleasureRouteLive()
-		Return
-	EndIf
-
+Bool Function ShouldBlockPreCombatRootGreetReentry(Actor akSpeaker = None, String asReason = "")
+	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
 	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-	SendModEvent(asEventName, ActorFormIDString(chosenSpeaker), ResolveSourceFlowForAfterPleasure() as Float)
+	If preCtrl == None
+		Return False
+	EndIf
+
+	If preCtrl.ShouldPreserveSessionDuringBridgeClear(chosenSpeaker)
+		Trace("RejectPreCombatRootGreet reason=session_preserve speaker=" + chosenSpeaker + " source=" + asReason)
+		preCtrl.ReleaseSpeakerForceGreetPackage(chosenSpeaker, "root_greet_reentry_block")
+		DispatchLegacyEvent("TFDPreCombatRootGreetRejected", chosenSpeaker, ActorFormIDString(chosenSpeaker), 5.0)
+		Return True
+	EndIf
+
+	Return False
 EndFunction
 
-Function SendCaptiveWorkEvent(String asEventName, Actor akSpeaker)
-	If asEventName == ""
+; ============================================================
+; Greet entry wrappers
+; ============================================================
+Bool Function BeginFlowGreet(Int aiFlow, Actor akSpeaker, ObjectReference akDriver = None, String asReason = "")
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		chosenSpeaker = akSpeaker
+	EndIf
+
+	If aiFlow == FLOW_PRECOMBAT && ShouldBlockPreCombatRootGreetReentry(chosenSpeaker, asReason)
+		Return False
+	EndIf
+
+	CurrentFlowKind = aiFlow
+	CurrentRouteActive = True
+	CurrentGreetConfirmed = True
+	CurrentEntryMode = ENTRY_FORCEGREET
+	CurrentMethod = METHOD_NONE
+	CurrentBranch = BRANCH_NONE
+	SetActiveSpeaker(chosenSpeaker)
+	SetPackageDriver(akDriver)
+	Trace("BeginFlowGreet flow=" + aiFlow + " speaker=" + chosenSpeaker + " reason=" + asReason)
+	If aiFlow == FLOW_PRECOMBAT && chosenSpeaker != None
+		DispatchLegacyEvent(EventPreCombatDialogueConfirmed, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	EndIf
+	If aiFlow == FLOW_INCOMBAT && chosenSpeaker != None && TFDInCombatQuest != None
+		TFDInCombatQuest.NoteDialogueOpened(chosenSpeaker, asReason)
+	EndIf
+	Return True
+EndFunction
+
+Bool Function BeginPreCombatGreet(Actor akSpeaker)
+	Return BeginFlowGreet(FLOW_PRECOMBAT, akSpeaker, None, "precombat_greet")
+EndFunction
+
+Bool Function BeginInCombatGreet(Actor akSpeaker)
+	Return BeginFlowGreet(FLOW_INCOMBAT, akSpeaker, None, "incombat_greet")
+EndFunction
+
+Bool Function BeginBleedoutGreet(Actor akSpeaker)
+	Return BeginFlowGreet(FLOW_BLEEDOUT, akSpeaker, None, "bleedout_greet")
+EndFunction
+
+Bool Function BeginCaptiveGreet(Actor akSpeaker)
+	Bool ok = BeginFlowGreet(FLOW_CAPTIVE, akSpeaker, None, "captive_greet")
+	TFDCaptiveBridge captiveCtrl = GetCaptiveController()
+	If captiveCtrl != None
+		captiveCtrl.MarkCaptiveDialogueOwned(ResolveSpeaker(akSpeaker))
+	EndIf
+	Return ok
+EndFunction
+
+Bool Function BeginCreatureGreet(Actor akSpeaker)
+	Return BeginFlowGreet(FLOW_CREATURE_TRUCE, akSpeaker, None, "creature_greet")
+EndFunction
+
+Bool Function BeginRescueGreet(Actor akSpeaker)
+	Return BeginFlowGreet(FLOW_SAVIOR, akSpeaker, None, "rescue_greet")
+EndFunction
+
+Bool Function BeginTeammateGreet(Actor akSpeaker)
+	; Teammate dialogue is normal player-initiated dialogue. Do not keep
+	; TFDSystemEventQuest ActiveSpeaker bound here, because a player can close
+	; the menu without choosing an outcome. A stale ActiveSpeaker blocks/warps
+	; the next teammate dialogue target.
+	If !IsActorValid(akSpeaker)
+		Return False
+	EndIf
+
+	If ShouldBlockTeammateGreetDuringPleasure(akSpeaker)
+		Return False
+	EndIf
+
+	ClearBridgeState(False)
+	Trace("BeginFlowGreet flow=" + FLOW_RECRUIT_CONTRACT + " speaker=" + akSpeaker + " reason=teammate_greet_transient")
+	DispatchLegacyEvent(EventTeammateGreetStarted, akSpeaker, ActorFormIDString(akSpeaker), 0.0)
+	ClearBridgeState(False)
+	Return True
+EndFunction
+
+Bool Function BeginTruceTeammateGreet(Actor akSpeaker)
+	Return BeginTeammateGreet(akSpeaker)
+EndFunction
+
+Bool Function BeginAfterPleasureGreet(Actor akSpeaker)
+	Bool ok = BeginFlowGreet(FLOW_AFTERPLEASURE, akSpeaker, None, "after_pleasure_greet")
+	TFDPleasureQuestScript pleasureCtrl = GetPleasureController()
+	If pleasureCtrl != None
+		pleasureCtrl.OnAfterPleasureDialogueOpened()
+	EndIf
+	Return ok
+EndFunction
+
+Bool Function BeginVictoryGreet(Actor akSpeaker)
+	Return BeginFlowGreet(FLOW_VICTORY, akSpeaker, None, "victory_greet")
+EndFunction
+
+; ============================================================
+; Choice wrappers
+; ============================================================
+Bool Function SubmitChoice(Int aiChoiceKind, Actor akSpeaker = None)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	Int flow = InferFlowFromSpeaker(chosenSpeaker)
+
+	Trace("SubmitChoice flow=" + flow + " choice=" + aiChoiceKind + " speaker=" + chosenSpeaker)
+
+	If flow == FLOW_PRECOMBAT && !IsPreCombatChoiceAllowed(aiChoiceKind, chosenSpeaker)
+		Return False
+	EndIf
+
+	If flow == FLOW_INCOMBAT && !IsInCombatChoiceAllowed(aiChoiceKind, chosenSpeaker)
+		Return False
+	EndIf
+
+	If flow == FLOW_AFTERPLEASURE
+		Return RouteAfterPleasureChoice(aiChoiceKind, chosenSpeaker)
+	ElseIf flow == FLOW_PRECOMBAT
+		Return RoutePreCombatChoice(aiChoiceKind, chosenSpeaker)
+	ElseIf flow == FLOW_INCOMBAT
+		Return RouteInCombatChoice(aiChoiceKind, chosenSpeaker)
+	ElseIf flow == FLOW_BLEEDOUT
+		Return RouteBleedoutChoice(aiChoiceKind, chosenSpeaker)
+	ElseIf flow == FLOW_CAPTIVE
+		Return RouteCaptiveChoice(aiChoiceKind, chosenSpeaker)
+	ElseIf flow == FLOW_VICTORY
+		Return RouteVictoryChoice(aiChoiceKind, chosenSpeaker)
+	ElseIf flow == FLOW_SAVIOR
+		Return RouteSaviorChoice(aiChoiceKind, chosenSpeaker)
+	ElseIf flow == FLOW_RECRUIT_CONTRACT
+		Return RouteRecruitContractChoice(aiChoiceKind, chosenSpeaker)
+	ElseIf flow == FLOW_CREATURE_BLEEDOUT || flow == FLOW_CREATURE_TRUCE
+		Return RouteCreatureChoice(aiChoiceKind, chosenSpeaker)
+	EndIf
+
+	Debug.Notification("TFD: No active dialogue flow.")
+	Return False
+EndFunction
+
+Bool Function ResolveDoNothing(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_DO_NOTHING, akSpeaker)
+EndFunction
+
+Bool Function ResolveFight(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_FIGHT, akSpeaker)
+EndFunction
+
+Bool Function ResolvePay(Actor akSpeaker)
+	Trace("ResolvePay experimental direct submit speaker=" + ResolveSpeaker(akSpeaker))
+	Return SubmitChoice(CHOICE_PAY, akSpeaker)
+EndFunction
+
+Bool Function ResolvePleasure(Actor akSpeaker)
+	Trace("ResolvePleasure experimental direct submit speaker=" + ResolveSpeaker(akSpeaker))
+	Return SubmitChoice(CHOICE_PLEASURE, akSpeaker)
+EndFunction
+
+Bool Function ResolveKidnap(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_KIDNAP, akSpeaker)
+EndFunction
+
+Bool Function ResolveRelease(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_RELEASE, akSpeaker)
+EndFunction
+
+Bool Function ResolveJoinEnemy(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_JOIN_ENEMY, akSpeaker)
+EndFunction
+
+Bool Function ResolveRecruit(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_RECRUIT, akSpeaker)
+EndFunction
+
+Bool Function ResolveFollowPlayer(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_FOLLOW_PLAYER, akSpeaker)
+EndFunction
+
+Bool Function ResolveWork(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_WORK, akSpeaker)
+EndFunction
+
+Bool Function ResolveLootEnemy(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_LOOT_ENEMY, akSpeaker)
+EndFunction
+
+Bool Function ResolveKillEnemy(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_KILL_ENEMY, akSpeaker)
+EndFunction
+
+Bool Function ResolveThanks(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_THANKS, akSpeaker)
+EndFunction
+
+Bool Function ResolveAfterPleasureEnd(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_THANKS, akSpeaker)
+EndFunction
+
+Bool Function ResolveExtendContract(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_EXTEND_CONTRACT, akSpeaker)
+EndFunction
+
+Bool Function ResolveTerminateContract(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_TERMINATE_CONTRACT, akSpeaker)
+EndFunction
+
+Bool Function ResolveReturnCaptive(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_RETURN_CAPTIVE, akSpeaker)
+EndFunction
+
+Bool Function ResolveRedoPleasure(Actor akSpeaker)
+	Return SubmitChoice(CHOICE_REDO_PLEASURE, akSpeaker)
+EndFunction
+
+; ============================================================
+; Flow routers
+; ============================================================
+Bool Function RoutePreCombatChoice(Int aiChoiceKind, Actor akSpeaker)
+	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
+	If preCtrl == None
+		Debug.Notification("TFD: PreCombat quest is not available.")
+		Return False
+	EndIf
+
+	If akSpeaker != None
+		preCtrl.SetSpeaker(akSpeaker)
+	EndIf
+
+	If aiChoiceKind == CHOICE_KIDNAP
+		Return preCtrl.TryResolveKidnapForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_PAY
+		Return preCtrl.ResolvePayForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_FIGHT
+		Return preCtrl.TryResolveFightForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_RECRUIT
+		Return preCtrl.ResolveRecruitForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_JOIN_ENEMY
+		Return preCtrl.ResolveJoinEnemyForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_RELEASE
+		Return preCtrl.ResolveReleaseForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_FOLLOW_PLAYER
+		Return preCtrl.ResolveFollowForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_DO_NOTHING
+		Return preCtrl.TryResolveDoNothingForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_PLEASURE
+		Return preCtrl.TryResolvePleasureForActor(akSpeaker)
+	EndIf
+
+	Debug.Notification("TFD: Invalid PreCombat outcome.")
+	Return False
+EndFunction
+
+Bool Function RouteInCombatChoice(Int aiChoiceKind, Actor akSpeaker)
+	TFDInCombatQuestScript inCtrl = GetInCombatController()
+	If inCtrl == None
+		Debug.Notification("TFD: InCombat quest is not available.")
+		Return False
+	EndIf
+
+	If akSpeaker != None
+		inCtrl.SetSpeaker(akSpeaker)
+	EndIf
+
+	If aiChoiceKind == CHOICE_KIDNAP
+		Return inCtrl.ResolveKidnapForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_PAY
+		Return inCtrl.ResolvePayForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_FIGHT
+		Return inCtrl.ResolveFightForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_RECRUIT
+		Return inCtrl.ResolveRecruitForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_JOIN_ENEMY
+		Return inCtrl.ResolveJoinEnemyForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_RELEASE
+		Return inCtrl.ResolveReleaseForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_FOLLOW_PLAYER
+		Return inCtrl.ResolveFollowForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_DO_NOTHING
+		Return inCtrl.ResolveDoNothingForActor(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_PLEASURE
+		Return inCtrl.ResolvePleasureForActor(akSpeaker)
+	EndIf
+
+	Debug.Notification("TFD: Invalid InCombat outcome.")
+	Return False
+EndFunction
+
+Bool Function RouteBleedoutChoice(Int aiChoiceKind, Actor akSpeaker)
+	TFDBleedoutQuestScript bleedCtrl = GetBleedoutController()
+	If bleedCtrl == None
+		Return False
+	EndIf
+
+	If aiChoiceKind == CHOICE_KIDNAP
+		Bool okKidnap = bleedCtrl.ResolveKidnap()
+		If okKidnap
+			FinalizeTerminalDialogueRoute("bleedout_kidnap")
+		EndIf
+		Return okKidnap
+	ElseIf aiChoiceKind == CHOICE_PAY
+		Bool okPay = bleedCtrl.ResolvePay()
+		If okPay
+			FinalizeTerminalDialogueRoute("bleedout_pay")
+		EndIf
+		Return okPay
+	ElseIf aiChoiceKind == CHOICE_RELEASE
+		Bool okRelease = bleedCtrl.ResolveRelease()
+		If okRelease
+			FinalizeTerminalDialogueRoute("bleedout_release")
+		EndIf
+		Return okRelease
+	ElseIf aiChoiceKind == CHOICE_DO_NOTHING
+		Bool okNone = bleedCtrl.ResolveDoNothing()
+		If okNone
+			FinalizeTerminalDialogueRoute("bleedout_do_nothing")
+		EndIf
+		Return okNone
+	ElseIf aiChoiceKind == CHOICE_PLEASURE
+		Bool okPleasure = bleedCtrl.ResolvePleasure()
+		If okPleasure
+			FinalizeTerminalDialogueRoute("bleedout_pleasure")
+		EndIf
+		Return okPleasure
+	EndIf
+
+	Debug.Notification("TFD: Invalid Bleedout outcome.")
+	Return False
+EndFunction
+
+Bool Function RouteCaptiveChoice(Int aiChoiceKind, Actor akSpeaker)
+	If aiChoiceKind == CHOICE_WORK
+		Return ResolveCaptiveWorkChoice(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_DO_NOTHING || aiChoiceKind == CHOICE_RETURN_CAPTIVE || aiChoiceKind == CHOICE_KIDNAP
+		Return ResolveCaptiveReturnChoice(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_RELEASE || aiChoiceKind == CHOICE_THANKS || aiChoiceKind == CHOICE_TERMINATE_CONTRACT
+		Return ResolveCaptiveReleaseChoice(akSpeaker, "captive_release")
+	ElseIf aiChoiceKind == CHOICE_PAY
+		Return ResolveCaptivePayChoice(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_FIGHT
+		Return ResolveCaptiveEscapeChoice(akSpeaker)
+	ElseIf aiChoiceKind == CHOICE_PLEASURE || aiChoiceKind == CHOICE_REDO_PLEASURE || aiChoiceKind == CHOICE_EXTEND_CONTRACT
+		Return ResolveCaptivePleasureChoice(akSpeaker)
+	EndIf
+
+	Debug.Notification("TFD: Invalid Captive outcome.")
+	Return False
+EndFunction
+
+Bool Function RouteAfterPleasureChoice(Int aiChoiceKind, Actor akSpeaker)
+	TFDPleasureQuestScript pleasureCtrl = GetPleasureController()
+	If pleasureCtrl == None
+		Return False
+	EndIf
+
+	If aiChoiceKind == CHOICE_PLEASURE || aiChoiceKind == CHOICE_REDO_PLEASURE || aiChoiceKind == CHOICE_EXTEND_CONTRACT
+		Bool okRedo = pleasureCtrl.ChooseRedo()
+		If okRedo
+			FinalizeTerminalDialogueRoute("after_pleasure_redo")
+		EndIf
+		Return okRedo
+	ElseIf aiChoiceKind == CHOICE_KIDNAP || aiChoiceKind == CHOICE_RETURN_CAPTIVE
+		Bool okCaptive = pleasureCtrl.ChooseCaptive()
+		If okCaptive
+			FinalizeTerminalDialogueRoute("after_pleasure_captive")
+		EndIf
+		Return okCaptive
+	ElseIf aiChoiceKind == CHOICE_PAY
+		Bool okPay = pleasureCtrl.ChoosePay()
+		If okPay
+			FinalizeTerminalDialogueRoute("after_pleasure_pay")
+		EndIf
+		Return okPay
+	ElseIf aiChoiceKind == CHOICE_RECRUIT
+		Bool okRecruit = pleasureCtrl.ChooseRecruit()
+		If okRecruit
+			FinalizeTerminalDialogueRoute("after_pleasure_recruit")
+		EndIf
+		Return okRecruit
+	ElseIf aiChoiceKind == CHOICE_JOIN_ENEMY
+		Bool okJoin = pleasureCtrl.ChooseJoinEnemy()
+		If okJoin
+			FinalizeTerminalDialogueRoute("after_pleasure_join_enemy")
+		EndIf
+		Return okJoin
+	ElseIf aiChoiceKind == CHOICE_THANKS || aiChoiceKind == CHOICE_DO_NOTHING
+		Bool okEnd = pleasureCtrl.ChooseEnd()
+		If okEnd
+			FinalizeTerminalDialogueRoute("after_pleasure_end")
+		EndIf
+		Return okEnd
+	ElseIf aiChoiceKind == CHOICE_RELEASE || aiChoiceKind == CHOICE_TERMINATE_CONTRACT
+		Bool okRelease = pleasureCtrl.ChooseRelease()
+		If okRelease
+			FinalizeTerminalDialogueRoute("after_pleasure_release")
+		EndIf
+		Return okRelease
+	ElseIf aiChoiceKind == CHOICE_WORK
+		Bool okWork = pleasureCtrl.ChooseWork()
+		If okWork
+			FinalizeTerminalDialogueRoute("after_pleasure_work")
+		EndIf
+		Return okWork
+	EndIf
+
+	Return False
+EndFunction
+
+Bool Function RouteVictoryChoice(Int aiChoiceKind, Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		Return False
+	EndIf
+
+	String chosenFormId = ActorFormIDString(chosenSpeaker)
+
+	If aiChoiceKind == CHOICE_RECRUIT
+		DispatchLegacyEvent(EventVictoryOutcomeRecruit, chosenSpeaker, chosenFormId, 0.0)
+		DispatchLegacyEvent(EventVictoryDefeatedRecruit, chosenSpeaker, chosenFormId, 0.0)
+		FinalizeTerminalDialogueRoute("victory_recruit")
+		Return True
+	ElseIf aiChoiceKind == CHOICE_LOOT_ENEMY
+		Bool okLoot = ExecuteVictoryLoot(akSpeaker)
+		If okLoot
+			DispatchLegacyEvent(EventVictoryOutcomeLoot, chosenSpeaker, chosenFormId, 0.0)
+			FinalizeTerminalDialogueRoute("victory_loot")
+		EndIf
+		Return okLoot
+	ElseIf aiChoiceKind == CHOICE_KILL_ENEMY
+		Bool okKill = ExecuteVictoryKill(akSpeaker)
+		If okKill
+			DispatchLegacyEvent(EventVictoryOutcomeKill, chosenSpeaker, chosenFormId, 0.0)
+			FinalizeTerminalDialogueRoute("victory_kill")
+		EndIf
+		Return okKill
+	ElseIf aiChoiceKind == CHOICE_PLEASURE
+		DispatchLegacyEvent(EventVictoryOutcomePleasure, chosenSpeaker, chosenFormId, 0.0)
+		DispatchLegacyEvent(EventVictoryRecoverDefeatedEnemy, chosenSpeaker, chosenFormId, 0.0)
+		Utility.WaitMenuMode(0.15)
+		Return StartPleasureFromSystemSource(chosenSpeaker, PLEASURE_SOURCE_VICTORY, "victory_pleasure")
+	ElseIf aiChoiceKind == CHOICE_RELEASE || aiChoiceKind == CHOICE_DO_NOTHING
+		DispatchLegacyEvent(EventVictoryOutcomeCancel, chosenSpeaker, chosenFormId, 0.0)
+		FinalizeTerminalDialogueRoute("victory_do_nothing")
+		Return True
+	EndIf
+
+	Debug.Notification("TFD: Invalid Victory outcome.")
+	Return False
+EndFunction
+
+Bool Function RouteSaviorChoice(Int aiChoiceKind, Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If aiChoiceKind == CHOICE_THANKS || aiChoiceKind == CHOICE_DO_NOTHING || aiChoiceKind == CHOICE_RELEASE
+		DispatchLegacyEvent(EventPlayerSaviorClear, chosenSpeaker)
+		FinalizeTerminalDialogueRoute("savior_clear")
+		Return True
+	ElseIf aiChoiceKind == CHOICE_PAY
+		If !TransferPayToSpeaker(chosenSpeaker)
+			Return False
+		EndIf
+		DispatchLegacyEvent(EventPlayerSaviorClear, chosenSpeaker)
+		If chosenSpeaker != None && !chosenSpeaker.IsDead()
+			chosenSpeaker.StopCombatAlarm()
+			chosenSpeaker.EvaluatePackage()
+		EndIf
+		FinalizeTerminalDialogueRoute("savior_pay")
+		Return True
+	ElseIf aiChoiceKind == CHOICE_PLEASURE
+		Return StartPleasureFromSystemSource(chosenSpeaker, PLEASURE_SOURCE_TEAMMATE, "savior_pleasure")
+	EndIf
+
+	Debug.Notification("TFD: Invalid Savior outcome.")
+	Return False
+EndFunction
+
+Bool Function RouteRecruitContractChoice(Int aiChoiceKind, Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If aiChoiceKind == CHOICE_PAY || aiChoiceKind == CHOICE_EXTEND_CONTRACT
+		Return ResolveTeammateExtendContractGold(chosenSpeaker)
+	ElseIf aiChoiceKind == CHOICE_PLEASURE
+		Return ResolveTeammateRestoreHealthPleasure(chosenSpeaker)
+	ElseIf aiChoiceKind == CHOICE_TERMINATE_CONTRACT || aiChoiceKind == CHOICE_RELEASE || aiChoiceKind == CHOICE_DO_NOTHING || aiChoiceKind == CHOICE_THANKS
+		Return ResolveTeammateTerminateContract(chosenSpeaker)
+	EndIf
+
+	Debug.Notification("TFD: Invalid Recruit Contract outcome.")
+	Return False
+EndFunction
+
+Bool Function RouteCreatureChoice(Int aiChoiceKind, Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If aiChoiceKind == CHOICE_FIGHT
+		Bool okFight = ExecuteGenericFight(chosenSpeaker)
+		If okFight
+			FinalizeTerminalDialogueRoute("creature_fight")
+		EndIf
+		Return okFight
+	ElseIf aiChoiceKind == CHOICE_FOLLOW_PLAYER || aiChoiceKind == CHOICE_RECRUIT || aiChoiceKind == CHOICE_KIDNAP
+		Bool okAssign = AssignCreatureTeammate(chosenSpeaker)
+		If okAssign
+			FinalizeTerminalDialogueRoute("creature_assign")
+		EndIf
+		Return okAssign
+	ElseIf aiChoiceKind == CHOICE_RELEASE || aiChoiceKind == CHOICE_DO_NOTHING
+		Bool okRelease = ReleaseCreatureTeammate(chosenSpeaker)
+		If okRelease
+			FinalizeTerminalDialogueRoute("creature_release")
+		EndIf
+		Return okRelease
+	ElseIf aiChoiceKind == CHOICE_PLEASURE
+		Return StartPleasureFromSystemSource(chosenSpeaker, PLEASURE_SOURCE_VICTORY, "creature_pleasure")
+	EndIf
+
+	Debug.Notification("TFD: Invalid Creature outcome.")
+	Return False
+EndFunction
+
+; ============================================================
+; Teammate contract / healing helpers
+; ============================================================
+Bool Function ResolveTeammateExtendContractGold(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		Return False
+	EndIf
+	If !TransferPayToSpeaker(chosenSpeaker)
+		Return False
+	EndIf
+	DispatchLegacyEvent(EventTeammateExtendContractGold, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	FinalizeTerminalDialogueRoute("teammate_extend_contract_gold")
+	Return True
+EndFunction
+
+Bool Function ResolveTeammateExtendContractPleasure(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		Return False
+	EndIf
+	DispatchLegacyEvent(EventTeammateExtendContractPleasure, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	Return StartPleasureFromSystemSource(chosenSpeaker, PLEASURE_SOURCE_TEAMMATE, "teammate_extend_contract_pleasure")
+EndFunction
+
+Bool Function ResolveTeammateRestoreHealthPotion(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		Return False
+	EndIf
+	DispatchLegacyEvent(EventTeammateRestoreHealthPotion, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	FinalizeTerminalDialogueRoute("teammate_restore_health_potion")
+	Return True
+EndFunction
+
+Bool Function ResolveTeammateRestoreHealthPleasure(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		Return False
+	EndIf
+	DispatchLegacyEvent(EventTeammateRestoreHealthPleasure, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	Return StartPleasureFromSystemSource(chosenSpeaker, PLEASURE_SOURCE_TEAMMATE, "teammate_restore_health_pleasure")
+EndFunction
+
+Bool Function ResolveTeammateTerminateContract(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	TFDPlayerTeammateQuestScript teammateCtrl = GetTeammateController()
+	If chosenSpeaker == None
+		Return False
+	EndIf
+	DispatchLegacyEvent(EventTeammateTerminateContract, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	If teammateCtrl != None
+		teammateCtrl.UnregisterTeammate(chosenSpeaker)
+	EndIf
+	If !chosenSpeaker.IsDead()
+		chosenSpeaker.StopCombat()
+		chosenSpeaker.StopCombatAlarm()
+		chosenSpeaker.SetPlayerTeammate(False, False)
+		chosenSpeaker.EvaluatePackage()
+	EndIf
+	FinalizeTerminalDialogueRoute("teammate_terminate_contract")
+	Return True
+EndFunction
+
+; ============================================================
+; Pleasure helpers
+; ============================================================
+Bool Function StartPleasureFromSystemSource(Actor akSpeaker, Int aiSourceFlow, String asReason = "")
+	TFDPleasureQuestScript pleasureCtrl = GetPleasureController()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If pleasureCtrl == None
+		Return False
+	EndIf
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		Return False
+	EndIf
+
+	pleasureCtrl.BeginPleasure(chosenSpeaker, aiSourceFlow, 0)
+	If pleasureCtrl.AreCoreAliasesValid()
+		Bool ok = pleasureCtrl.ChoosePleasure()
+		If ok
+			FinalizeTerminalDialogueRoute("pleasure_begin_" + asReason)
+		EndIf
+		Return ok
+	EndIf
+
+	pleasureCtrl.BeginAliasAcquire("system_" + asReason)
+	FinalizeTerminalDialogueRoute("pleasure_pending_" + asReason)
+	Return True
+EndFunction
+
+; ============================================================
+; Teammate helpers
+; ============================================================
+Bool Function AssignHumanoidTeammate(Actor akSpeaker)
+	Actor playerRef = Game.GetPlayer()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	TFDPlayerTeammateQuestScript teammateCtrl = GetTeammateController()
+
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		Return False
+	EndIf
+
+	If TFDTeammateFaction != None
+		If !chosenSpeaker.IsInFaction(TFDTeammateFaction)
+			chosenSpeaker.AddToFaction(TFDTeammateFaction)
+		EndIf
+		chosenSpeaker.SetFactionRank(TFDTeammateFaction, 0)
+	EndIf
+
+	If playerRef != None
+		chosenSpeaker.SetRelationshipRank(playerRef, 3)
+		playerRef.SetRelationshipRank(chosenSpeaker, 3)
+	EndIf
+
+	chosenSpeaker.StopCombat()
+	chosenSpeaker.StopCombatAlarm()
+	chosenSpeaker.SetPlayerTeammate(True, False)
+	chosenSpeaker.EvaluatePackage()
+	DispatchLegacyEvent(EventHumanoidTeammateAssign, chosenSpeaker)
+
+	If teammateCtrl != None
+		teammateCtrl.EnsureActiveTeammateContract(chosenSpeaker, "system_assign_humanoid_teammate")
+		teammateCtrl.ForceRegisterOrRefreshConvertedTeammate(chosenSpeaker, "system_assign_humanoid_teammate")
+	EndIf
+
+	Return True
+EndFunction
+
+Bool Function ReleaseHumanoidTeammate(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	TFDPlayerTeammateQuestScript teammateCtrl = GetTeammateController()
+
+	If chosenSpeaker == None
+		Return False
+	EndIf
+
+	If teammateCtrl != None
+		teammateCtrl.UnregisterTeammate(chosenSpeaker)
+	EndIf
+
+	If !chosenSpeaker.IsDead()
+		chosenSpeaker.StopCombat()
+		chosenSpeaker.StopCombatAlarm()
+		If TFDTeammateFaction != None && chosenSpeaker.IsInFaction(TFDTeammateFaction)
+			chosenSpeaker.RemoveFromFaction(TFDTeammateFaction)
+		EndIf
+		chosenSpeaker.SetPlayerTeammate(False, False)
+		chosenSpeaker.EvaluatePackage()
+	EndIf
+
+	Return True
+EndFunction
+
+Bool Function AssignCreatureTeammate(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		Return False
+	EndIf
+
+	chosenSpeaker.StopCombat()
+	chosenSpeaker.StopCombatAlarm()
+	chosenSpeaker.EvaluatePackage()
+	DispatchLegacyEvent(EventCreatureTeammateAssign, chosenSpeaker)
+	Return True
+EndFunction
+
+Bool Function ReleaseCreatureTeammate(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	If chosenSpeaker == None
+		Return False
+	EndIf
+
+	DispatchLegacyEvent(EventCreatureTeammateUnassign, chosenSpeaker)
+	If !chosenSpeaker.IsDead()
+		chosenSpeaker.StopCombat()
+		chosenSpeaker.StopCombatAlarm()
+		chosenSpeaker.EvaluatePackage()
+	EndIf
+	Return True
+EndFunction
+
+; ============================================================
+; Generic action helpers
+; ============================================================
+Bool Function ExecuteGenericFight(Actor akSpeaker)
+	Actor playerRef = Game.GetPlayer()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		Return False
+	EndIf
+
+	chosenSpeaker.StopCombatAlarm()
+	If playerRef != None
+		chosenSpeaker.StartCombat(playerRef)
+	EndIf
+	chosenSpeaker.EvaluatePackage()
+	Return True
+EndFunction
+
+Bool Function ExecuteVictoryKill(Actor akSpeaker)
+	Actor playerRef = Game.GetPlayer()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If chosenSpeaker == None || chosenSpeaker.IsDead()
+		Return False
+	EndIf
+
+	chosenSpeaker.StopCombat()
+	chosenSpeaker.StopCombatAlarm()
+	chosenSpeaker.Kill(playerRef)
+	Return True
+EndFunction
+
+Bool Function ExecuteVictoryLoot(Actor akSpeaker)
+	Actor playerRef = Game.GetPlayer()
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+
+	If chosenSpeaker == None
+		Return False
+	EndIf
+
+	If !chosenSpeaker.IsDead()
+		chosenSpeaker.StopCombat()
+		chosenSpeaker.StopCombatAlarm()
+		chosenSpeaker.Kill(playerRef)
+		Utility.WaitMenuMode(0.10)
+	EndIf
+
+	If playerRef != None
+		chosenSpeaker.Activate(playerRef)
+	EndIf
+	Return True
+EndFunction
+
+; ============================================================
+; Captive outcome helpers
+; ============================================================
+Actor Function ResolveCaptiveActor(Actor akSpeaker = None)
+	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
+	TFDCaptiveBridge captiveCtrl = GetCaptiveController()
+
+	If IsActorValid(chosenSpeaker)
+		Trace("ResolveCaptiveActor direct actor=" + chosenSpeaker)
+		Return chosenSpeaker
+	EndIf
+	If captiveCtrl != None
+		chosenSpeaker = captiveCtrl.GetResolveCaptor()
+		If IsActorValid(chosenSpeaker)
+			Trace("ResolveCaptiveActor bridge actor=" + chosenSpeaker)
+			Return chosenSpeaker
+		EndIf
+	EndIf
+	Trace("ResolveCaptiveActor failed input=" + akSpeaker + " activeSpeaker=" + GetActiveSpeaker())
+	Return None
+EndFunction
+
+Function CommitCaptiveBridgeChoice(Bool abReleaseCaptorNoCooldown = False, Bool abClearAll = False)
+	TFDCaptiveBridge captiveCtrl = GetCaptiveController()
+	If captiveCtrl == None
 		Return
 	EndIf
-	SendModEvent(asEventName, ActorFormIDString(akSpeaker), 0.0)
+
+	captiveCtrl.CommitCaptiveChoice()
+	If abClearAll
+		captiveCtrl.ClearAll()
+	ElseIf abReleaseCaptorNoCooldown
+		captiveCtrl.ReleaseOwnedCaptorNoCooldown()
+	EndIf
+	captiveCtrl.ClearCallCooldown()
+EndFunction
+
+Bool Function ResolveCaptiveWorkChoice(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveCaptiveActor(akSpeaker)
+	If chosenSpeaker == None
+		Debug.Notification("TFD: No valid captor for Work.")
+		Return False
+	EndIf
+
+	Bool okWork = BeginCaptiveWorkMode(chosenSpeaker)
+	If okWork
+		DispatchLegacyEvent(EventCaptiveOutcomeWork, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+		FinalizeTerminalDialogueRoute("captive_work", True)
+	EndIf
+	Return okWork
+EndFunction
+
+Bool Function ResolveCaptiveReturnChoice(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveCaptiveActor(akSpeaker)
+	If chosenSpeaker == None
+		Debug.Notification("TFD: No valid captor.")
+		Return False
+	EndIf
+
+	If CaptiveWorkActive
+		StopCaptiveWorkMode(True, False, "captive_return")
+	Else
+		CommitCaptiveBridgeChoice(True, False)
+		ClearTransientDialogueBridges()
+		SetCaptivePhaseValue(CAPTIVE_PHASE_CAPTIVE)
+	EndIf
+
+	DispatchLegacyEvent(EventCaptiveOutcomeReturn, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	FinalizeTerminalDialogueRoute("captive_return")
+	Return True
+EndFunction
+
+Bool Function ResolveCaptiveReleaseChoice(Actor akSpeaker, String asReason = "captive_release")
+	Actor chosenSpeaker = ResolveCaptiveActor(akSpeaker)
+
+	If chosenSpeaker == None
+		Debug.Notification("TFD: No valid captor to release.")
+		Return False
+	EndIf
+
+	ClearCaptiveWorkState()
+	CommitCaptiveBridgeChoice(False, True)
+	SendQuestEvent("TFDCaptiveClearAll")
+	ClearTransientDialogueBridges()
+	SetCaptivePhaseValue(CAPTIVE_PHASE_NONE)
+	DispatchLegacyEvent(EventCaptiveOutcomeRelease, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	FinalizeTerminalDialogueRoute(asReason)
+	Return True
+EndFunction
+
+Bool Function ResolveCaptivePayChoice(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveCaptiveActor(akSpeaker)
+	If chosenSpeaker == None
+		Debug.Notification("TFD: No valid captor to pay.")
+		Return False
+	EndIf
+	If !TransferPayToSpeaker(chosenSpeaker)
+		Debug.Notification("TFD: Pay failed.")
+		Return False
+	EndIf
+	Return ResolveCaptiveReleaseChoice(chosenSpeaker, "captive_pay")
+EndFunction
+
+Bool Function ResolveCaptiveEscapeChoice(Actor akSpeaker)
+	Actor playerRef = Game.GetPlayer()
+	Actor chosenSpeaker = ResolveCaptiveActor(akSpeaker)
+
+	If playerRef == None || chosenSpeaker == None || chosenSpeaker.IsDead()
+		Debug.Notification("TFD: No valid captor to fight.")
+		Return False
+	EndIf
+
+	CommitCaptiveBridgeChoice(True, False)
+	ClearTransientDialogueBridges()
+	SetCaptivePhaseValue(CAPTIVE_PHASE_ESCAPE)
+	DispatchLegacyEvent(EventCaptiveOutcomeEscape, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+
+	If chosenSpeaker.Is3DLoaded()
+		chosenSpeaker.StopCombatAlarm()
+		chosenSpeaker.StartCombat(playerRef)
+		chosenSpeaker.EvaluatePackage()
+	EndIf
+
+	FinalizeTerminalDialogueRoute("captive_escape")
+	Return True
+EndFunction
+
+Bool Function ResolveCaptivePleasureChoice(Actor akSpeaker)
+	Actor chosenSpeaker = ResolveCaptiveActor(akSpeaker)
+	If chosenSpeaker == None
+		Debug.Notification("TFD: No valid captor for Pleasure.")
+		Return False
+	EndIf
+
+	CommitCaptiveBridgeChoice(True, False)
+	SetCaptivePhaseValue(4)
+	DispatchLegacyEvent(EventCaptiveOutcomePleasure, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+
+	Bool okPleasure = StartPleasureFromSystemSource(chosenSpeaker, PLEASURE_SOURCE_CAPTIVE, "captive_pleasure")
+	If !okPleasure
+		SetCaptivePhaseValue(CAPTIVE_PHASE_CAPTIVE)
+		DispatchLegacyEvent(EventCaptiveOutcomeReturn, chosenSpeaker, ActorFormIDString(chosenSpeaker), 0.0)
+	EndIf
+	Return okPleasure
+EndFunction
+
+; ============================================================
+; Captive work compatibility
+; ============================================================
+Function SetCaptivePhaseValue(Int aiPhase)
+	CurrentCaptivePhaseState = aiPhase
+	If TFDCaptiveState != None
+		TFDCaptiveState.SetValue(aiPhase as Float)
+	EndIf
 EndFunction
 
 Function ClearCaptiveWorkState()
@@ -1151,24 +1767,19 @@ EndFunction
 Function StopCaptiveWorkMode(Bool restoreCaptivePhase, Bool startHostile, String asReason)
 	Actor playerRef = Game.GetPlayer()
 	Actor speakerRef = CaptiveWorkSpeaker
-	TFDCaptiveBridge captiveBridgeCtrl = GetCaptiveBridgeController()
+	TFDCaptiveBridge captiveCtrl = GetCaptiveController()
 
 	ClearCaptiveWorkState()
-	ClearPreCombatFlow(None)
-	ClearBleedoutFlow(None)
-	ClearTruceFlow()
-	ClearInCombatFlow()
+	ClearTransientDialogueBridges()
 
 	If restoreCaptivePhase
 		SetCaptivePhaseValue(CAPTIVE_PHASE_CAPTIVE)
-		SendCaptiveWorkEvent("TFDCaptiveWorkStop", speakerRef)
 	Else
 		SetCaptivePhaseValue(CAPTIVE_PHASE_ESCAPE)
-		SendCaptiveWorkEvent("TFDCaptiveWorkViolation", speakerRef)
 	EndIf
 
-	If captiveBridgeCtrl != None
-		captiveBridgeCtrl.ClearCallCooldown()
+	If captiveCtrl != None
+		captiveCtrl.ClearCallCooldown()
 	EndIf
 
 	If speakerRef != None && !speakerRef.IsDead()
@@ -1187,44 +1798,37 @@ EndFunction
 Bool Function BeginCaptiveWorkMode(Actor akSpeaker)
 	Actor playerRef = Game.GetPlayer()
 	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-	TFDCaptiveBridge captiveBridgeCtrl = GetCaptiveBridgeController()
+	TFDCaptiveBridge captiveCtrl = GetCaptiveController()
 
 	If playerRef == None
 		Return False
 	EndIf
-
-	If !IsCaptiveDialogueFlowLive()
+	If CurrentFlowKind != FLOW_CAPTIVE && !CaptiveWorkActive
 		Debug.Notification("TFD: Work is only valid during Captive flow.")
 		Return False
 	EndIf
-
 	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		If captiveBridgeCtrl != None
-			chosenSpeaker = captiveBridgeCtrl.GetResolveCaptor()
+		If captiveCtrl != None
+			chosenSpeaker = captiveCtrl.GetResolveCaptor()
 		EndIf
 	EndIf
-
 	If chosenSpeaker == None || chosenSpeaker.IsDead()
 		Debug.Notification("TFD: No valid captor for Work.")
 		Return False
 	EndIf
 
-	If captiveBridgeCtrl != None
-		(captiveBridgeCtrl as TFDCaptiveBridge).CommitCaptiveChoice()
-		(captiveBridgeCtrl as TFDCaptiveBridge).ReleaseOwnedCaptorNoCooldown()
-		(captiveBridgeCtrl as TFDCaptiveBridge).ClearCallCooldown()
+	If captiveCtrl != None
+		captiveCtrl.CommitCaptiveChoice()
+		captiveCtrl.ReleaseOwnedCaptorNoCooldown()
+		captiveCtrl.ClearCallCooldown()
 	EndIf
 
 	CaptiveWorkActive = True
 	CaptiveWorkSpeaker = chosenSpeaker
 	CaptiveWorkLocation = playerRef.GetCurrentLocation()
 	SetActiveFlow(FLOW_CAPTIVE, chosenSpeaker)
-	ClearPreCombatFlow(None)
-	ClearBleedoutFlow(None)
-	ClearTruceFlow()
-	ClearInCombatFlow()
+	ClearTransientDialogueBridges()
 	SetCaptivePhaseValue(CAPTIVE_PHASE_RELEASED_WORK)
-	SendCaptiveWorkEvent("TFDCaptiveWorkStart", chosenSpeaker)
 
 	If chosenSpeaker.Is3DLoaded()
 		chosenSpeaker.StopCombat()
@@ -1243,24 +1847,20 @@ Function UpdateCaptiveWorkMode()
 	If !CaptiveWorkActive
 		Return
 	EndIf
-
 	If playerRef == None
 		ClearCaptiveWorkState()
 		Return
 	EndIf
-
 	If speakerRef == None || speakerRef.IsDead()
 		StopCaptiveWorkMode(True, False, "speaker_lost")
 		Return
 	EndIf
-
 	If CaptiveWorkLocation != None
 		If playerRef.GetCurrentLocation() != CaptiveWorkLocation
 			StopCaptiveWorkMode(False, True, "leave_location")
 			Return
 		EndIf
 	EndIf
-
 	If playerRef.IsInCombat() || speakerRef.IsInCombat() || speakerRef.IsHostileToActor(playerRef)
 		StopCaptiveWorkMode(False, True, "hostile_violation")
 		Return
@@ -1272,775 +1872,4 @@ Function UpdateCaptiveWorkMode()
 	EndIf
 
 	RegisterForSingleUpdate(CaptiveWorkUpdateInterval)
-EndFunction
-
-; -------------------------------
-; Main generic router
-; -------------------------------
-Bool Function ResolveDialogueOutcome(Int aiOutcome, Actor akSpeaker = None)
-	Int flow = GetActiveFlow()
-	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-	Int liveFlow = InferLiveFlow(chosenSpeaker)
-
-	If flow == FLOW_AFTERPLEASURE
-		; keep AfterPleasure authoritative once it is active
-	ElseIf liveFlow == FLOW_BLEEDOUT && flow != FLOW_BLEEDOUT
-		flow = FLOW_BLEEDOUT
-		SetActiveFlow(flow, chosenSpeaker)
-	ElseIf liveFlow == FLOW_CAPTIVE && flow != FLOW_CAPTIVE
-		flow = FLOW_CAPTIVE
-		SetActiveFlow(flow, chosenSpeaker)
-	ElseIf flow == FLOW_NONE
-		flow = liveFlow
-		If flow != FLOW_NONE
-			SetActiveFlow(flow, chosenSpeaker)
-		EndIf
-	EndIf
-
-	If flow == FLOW_AFTERPLEASURE
-		Return RouteAfterPleasureOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_PRECOMBAT
-		Return RoutePreCombatOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_INCOMBAT
-		Return RouteInCombatOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_BLEEDOUT
-		Return RouteBleedoutOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_CAPTIVE
-		Return RouteCaptiveOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_VICTORY
-		Return RouteVictoryOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_SAVIOR
-		Return RouteSaviorOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_RECRUIT_CONTRACT
-		Return RouteRecruitContractOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_CREATURE_BLEEDOUT
-		Return RouteCreatureBleedoutOutcome(aiOutcome, chosenSpeaker)
-	ElseIf flow == FLOW_CREATURE_TRUCE
-		Return RouteCreatureTruceOutcome(aiOutcome, chosenSpeaker)
-	EndIf
-
-	Debug.Notification("TFD: No active dialogue flow.")
-	Return False
-EndFunction
-
-; -------------------------------
-; Public wrappers for dialogue fragments
-; -------------------------------
-Bool Function ResolveKidnap(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_kidnap")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_KIDNAP, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_kidnap")
-	ResolveRecordedChoice(akSpeaker, "resolve_kidnap")
-
-	Bool ok = ResolveDialogueOutcome(OUTCOME_KIDNAP, akSpeaker)
-	If ok
-		SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceKidnap", akSpeaker)
-		FinalizeTerminalDialogueRoute("resolve_kidnap_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolvePay(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_pay")
-		Return False
-	EndIf
-
-	If !SetDialogueMethod(METHOD_PAY, akSpeaker, "resolve_pay")
-		Return False
-	EndIf
-
-	SetDialogueBranch(BRANCH_PAY, akSpeaker, "resolve_pay")
-	Return ResolveDialogueOutcome(OUTCOME_PAY, akSpeaker)
-EndFunction
-
-Bool Function ResolveFight(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_fight")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_FIGHT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_fight")
-	ResolveRecordedChoice(akSpeaker, "resolve_fight")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_FIGHT, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_fight_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveRecruit(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_recruit")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_RECRUIT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_recruit")
-	ResolveRecordedChoice(akSpeaker, "resolve_recruit")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_RECRUIT, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_recruit_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveJoinEnemy(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_join_enemy")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_JOIN_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_join_enemy")
-	ResolveRecordedChoice(akSpeaker, "resolve_join_enemy")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_JOIN_ENEMY, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_join_enemy_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveRelease(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_release")
-		Return False
-	EndIf
-
-	Int requestedFlow = ResolveExplicitDialogueFlow(akSpeaker)
-
-	RecordDialogueChoice(CHOICE_RELEASE_ME, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_release")
-	ResolveRecordedChoice(akSpeaker, "resolve_release")
-
-	Bool ok = ResolveDialogueOutcome(OUTCOME_RELEASE, akSpeaker)
-	If ok
-		Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-		EmitReleaseGraceEventForFlow(requestedFlow, chosenSpeaker)
-		SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceRelease", chosenSpeaker)
-		FinalizeTerminalDialogueRoute("resolve_release_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveFollowPlayer(Actor akSpeaker)
-	Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer entry speaker=" + akSpeaker + " activeFlow=" + CurrentRootFlow + " routeActive=" + CurrentRouteActive + " method=" + CurrentMethod + " branch=" + CurrentBranch)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_follow_player")
-		Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer EnsureExplicitDialogueRoute FAILED speaker=" + akSpeaker)
-		Return False
-	EndIf
-
-	Int requestedFlow = ResolveExplicitDialogueFlow(akSpeaker)
-	Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer flow=" + requestedFlow + " speaker=" + akSpeaker)
-
-	RecordDialogueChoice(CHOICE_FOLLOW_ME, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_follow_player")
-	ResolveRecordedChoice(akSpeaker, "resolve_follow_player")
-	Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer choice recorded speaker=" + akSpeaker)
-
-	Bool ok = ResolveDialogueOutcome(OUTCOME_FOLLOW_PLAYER, akSpeaker)
-	Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer outcome result=" + ok + " speaker=" + akSpeaker)
-	If ok
-		Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-		Debug.Trace("[TFD][FollowTrace] ResolveFollowPlayer emit grace flow=" + requestedFlow + " chosenSpeaker=" + chosenSpeaker)
-		EmitFollowGraceEventForFlow(requestedFlow, chosenSpeaker)
-		FinalizeTerminalDialogueRoute("resolve_follow_player_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveDoNothing(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_do_nothing")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_DO_NOTHING, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_do_nothing")
-	ResolveRecordedChoice(akSpeaker, "resolve_do_nothing")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_DO_NOTHING, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_do_nothing_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveWork(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_work")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_WORK, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_work")
-	ResolveRecordedChoice(akSpeaker, "resolve_work")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_WORK, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_work_done", True)
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveLootEnemy(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_loot_enemy")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_LOOT_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_loot_enemy")
-	ResolveRecordedChoice(akSpeaker, "resolve_loot_enemy")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_LOOT_ENEMY, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_loot_enemy_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveKillEnemy(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_kill_enemy")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_KILL_ENEMY, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_kill_enemy")
-	ResolveRecordedChoice(akSpeaker, "resolve_kill_enemy")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_KILL_ENEMY, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_kill_enemy_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveThanks(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_thanks")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_THANKS, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_thanks")
-	ResolveRecordedChoice(akSpeaker, "resolve_thanks")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_THANKS, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_thanks_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveExtendContract(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_extend_contract")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_EXTEND_CONTRACT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_extend_contract")
-	ResolveRecordedChoice(akSpeaker, "resolve_extend_contract")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_EXTEND_CONTRACT, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_extend_contract_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ResolveTerminateContract(Actor akSpeaker)
-	If !EnsureExplicitDialogueRoute(akSpeaker, "resolve_terminate_contract")
-		Return False
-	EndIf
-
-	RecordDialogueChoice(CHOICE_TERMINATE_CONTRACT, CHOICE_SOURCE_EXPLICIT_DIALOG, akSpeaker, "resolve_terminate_contract")
-	ResolveRecordedChoice(akSpeaker, "resolve_terminate_contract")
-	Bool ok = ResolveDialogueOutcome(OUTCOME_TERMINATE_CONTRACT, akSpeaker)
-	If ok
-		FinalizeTerminalDialogueRoute("resolve_terminate_contract_done")
-	EndIf
-	Return ok
-EndFunction
-
-Bool Function ChoosePayMethod(Actor akSpeaker)
-	Return SetDialogueMethod(METHOD_PAY, akSpeaker, "choose_pay_method")
-EndFunction
-
-Bool Function RecordImplicitBleedoutCloseNoCommit(Actor akSpeaker = None)
-	If !CurrentRouteActive
-		BeginDialogueRoute(FLOW_BLEEDOUT, ENTRY_FORCEGREET, akSpeaker, "implicit_bleed_close_no_commit")
-	EndIf
-	If CurrentRootFlow != FLOW_BLEEDOUT
-		Return False
-	EndIf
-	RecordDialogueChoice(CHOICE_DO_NOTHING, CHOICE_SOURCE_DIALOG_CLOSED_NO_COMMIT, akSpeaker, "implicit_bleed_close_no_commit")
-	Return ResolveRecordedChoice(akSpeaker, "implicit_bleed_close_no_commit")
-EndFunction
-
-Int Function GetSharedPayAmount()
-	If TFDPayGold == None
-		Return 0
-	EndIf
-
-	Int payAmount = TFDPayGold.GetValueInt()
-	If payAmount < 0
-		payAmount = 0
-	EndIf
-	Return payAmount
-EndFunction
-
-Actor Function ResolvePreCombatSpeaker(Actor akSpeaker)
-	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-	If chosenSpeaker != None && !chosenSpeaker.IsDead()
-		Return chosenSpeaker
-	EndIf
-	Return None
-EndFunction
-
-Function PreparePreCombatSpeaker(TFDPreCombatQuestScript preCtrl, Actor akSpeaker)
-	If preCtrl == None
-		Return
-	EndIf
-	If akSpeaker != None && !akSpeaker.IsDead()
-		preCtrl.SetSpeaker(akSpeaker)
-	EndIf
-EndFunction
-
-Function NormalizePreCombatRecruitSpeakerState(Actor akSpeaker, Actor akPlayer)
-	If akSpeaker == None || akPlayer == None
-		Return
-	EndIf
-
-	akSpeaker.SetRelationshipRank(akPlayer, 4)
-	akPlayer.SetRelationshipRank(akSpeaker, 4)
-	akSpeaker.SetPlayerTeammate(True, False)
-	akSpeaker.StopCombat()
-	akSpeaker.StopCombatAlarm()
-	akSpeaker.EvaluatePackage()
-EndFunction
-
-Function CleanupPreCombatTemporaryState(TFDPreCombatQuestScript preCtrl)
-	If preCtrl == None
-		Return
-	EndIf
-	preCtrl.EndSafePass(False)
-	preCtrl.EndTemporaryFollow(False)
-	preCtrl.EndJoinEnemy(False)
-	preCtrl.ReleasePleasureLock(True)
-EndFunction
-
-Bool Function ExecutePreCombatKidnap(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-
-	PreparePreCombatSpeaker(preCtrl, chosenSpeaker)
-	CleanupPreCombatTemporaryState(preCtrl)
-
-	If preCtrl != None
-		preCtrl.ClearBridge()
-	Else
-		ClearTransientDialogueBridges()
-	EndIf
-
-	SendModEvent("TFDPreCombatOutcomeCaptive", ActorFormIDString(chosenSpeaker))
-	chosenSpeaker.StopCombat()
-	chosenSpeaker.StopCombatAlarm()
-	chosenSpeaker.EvaluatePackage()
-	SendModEvent("TFDPreCombatKidnap", ActorFormIDString(chosenSpeaker))
-	Return True
-EndFunction
-
-Bool Function ExecutePreCombatPay(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor playerRef = Game.GetPlayer()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-	If playerRef == None || Gold001 == None
-		Return False
-	EndIf
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-
-	Int payAmount = GetSharedPayAmount()
-	If payAmount <= 0
-		Return False
-	EndIf
-
-	PreparePreCombatSpeaker(preCtrl, chosenSpeaker)
-	CleanupPreCombatTemporaryState(preCtrl)
-	If preCtrl != None
-		preCtrl.ClearBridge()
-	Else
-		ClearTransientDialogueBridges()
-	EndIf
-
-	playerRef.RemoveItem(Gold001, payAmount, True, chosenSpeaker)
-	SendModEvent("TFDPreCombatOutcomePay")
-	Return True
-EndFunction
-
-Bool Function ExecutePreCombatFight(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor playerRef = Game.GetPlayer()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-
-	PreparePreCombatSpeaker(preCtrl, chosenSpeaker)
-	CleanupPreCombatTemporaryState(preCtrl)
-	If preCtrl != None
-		preCtrl.ClearBridge()
-	Else
-		ClearTransientDialogueBridges()
-	EndIf
-
-	SendModEvent("TFDPreCombatOutcomeFight", ActorFormIDString(chosenSpeaker))
-
-	If chosenSpeaker != None && playerRef != None && !chosenSpeaker.IsDead()
-		chosenSpeaker.StopCombatAlarm()
-		chosenSpeaker.StartCombat(playerRef)
-		chosenSpeaker.EvaluatePackage()
-	EndIf
-	Return True
-EndFunction
-
-Bool Function ExecutePreCombatRecruit(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor playerRef = Game.GetPlayer()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-
-	PreparePreCombatSpeaker(preCtrl, chosenSpeaker)
-	If preCtrl != None
-		preCtrl.ClearBridge()
-	Else
-		ClearTransientDialogueBridges()
-	EndIf
-
-	SendModEvent("TFDPreCombatOutcomeRecruit", ActorFormIDString(chosenSpeaker))
-
-	If preCtrl != None
-		Utility.WaitMenuMode(0.20)
-		Return preCtrl.PromoteActorAsRecruitLikeOutcome(chosenSpeaker, True)
-	EndIf
-
-	If playerRef == None
-		Return False
-	EndIf
-
-	NormalizePreCombatRecruitSpeakerState(chosenSpeaker, playerRef)
-	Return True
-EndFunction
-
-Bool Function ExecutePreCombatJoinEnemy(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-	If preCtrl == None
-		Return False
-	EndIf
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-	If !preCtrl.IsJoinEnemyOfferedByNative()
-		Debug.Notification("TFD: Join Enemy is not available here.")
-		Return False
-	EndIf
-
-	PreparePreCombatSpeaker(preCtrl, chosenSpeaker)
-	SendModEvent("TFDPreCombatOutcomeJoinEnemy")
-	preCtrl.ClearBridge()
-	Return preCtrl.BeginJoinEnemyExternal(chosenSpeaker)
-EndFunction
-
-Bool Function ExecutePreCombatRelease(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-	Float useDuration = 10.0
-
-	If preCtrl != None
-		If preCtrl.ReleaseDuration > 0.0
-			useDuration = preCtrl.ReleaseDuration
-		ElseIf preCtrl.SafePassDuration > 0.0
-			useDuration = preCtrl.SafePassDuration
-		EndIf
-	EndIf
-
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-
-	PreparePreCombatSpeaker(preCtrl, chosenSpeaker)
-	If preCtrl != None
-		preCtrl.StartSafePassForActorWithDuration(chosenSpeaker, 5, useDuration)
-	Else
-		ClearTransientDialogueBridges()
-	EndIf
-	SendModEvent("TFDPreCombatOutcomeRelease", ActorFormIDString(chosenSpeaker), useDuration)
-	Return True
-EndFunction
-
-Bool Function ExecutePreCombatFollow(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-	Float useDuration = 60.0
-
-	If preCtrl != None && preCtrl.FollowDuration > 0.0
-		useDuration = preCtrl.FollowDuration
-	EndIf
-
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-
-	PreparePreCombatSpeaker(preCtrl, chosenSpeaker)
-	SendModEvent("TFDPreCombatOutcomeFollow", ActorFormIDString(chosenSpeaker), useDuration)
-
-	If preCtrl != None
-		Return preCtrl.BeginTemporaryFollowExternal(chosenSpeaker, useDuration)
-	EndIf
-
-	Return False
-EndFunction
-
-Bool Function ExecutePreCombatDoNothing(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-	PreparePreCombatSpeaker(preCtrl, chosenSpeaker)
-	If preCtrl != None
-		preCtrl.StartSafePassForActor(chosenSpeaker, 4)
-		Return True
-	EndIf
-	Return False
-EndFunction
-
-; -------------------------------
-; Route: PreCombat
-; -------------------------------
-Bool Function RoutePreCombatOutcome(Int aiOutcome, Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor chosenSpeaker = ResolvePreCombatSpeaker(akSpeaker)
-
-	If preCtrl == None
-		Debug.Notification("TFD: PreCombat quest is not available.")
-		Return False
-	EndIf
-
-	If chosenSpeaker != None && !chosenSpeaker.IsDead()
-		preCtrl.SetSpeaker(chosenSpeaker)
-	EndIf
-
-	If aiOutcome == OUTCOME_KIDNAP
-		preCtrl.ResolveKidnapForActor(chosenSpeaker)
-		Return True
-	ElseIf aiOutcome == OUTCOME_PAY
-		Return preCtrl.ResolvePay()
-	ElseIf aiOutcome == OUTCOME_FIGHT
-		preCtrl.ResolveFightForActor(chosenSpeaker)
-		Return True
-	ElseIf aiOutcome == OUTCOME_RECRUIT
-		preCtrl.ResolveRecruitForActor(chosenSpeaker)
-		Return True
-	ElseIf aiOutcome == OUTCOME_JOIN_ENEMY
-		preCtrl.ResolveJoinEnemy()
-		Return True
-	ElseIf aiOutcome == OUTCOME_RELEASE
-		preCtrl.ResolveReleaseForActor(chosenSpeaker)
-		Return True
-	ElseIf aiOutcome == OUTCOME_FOLLOW_PLAYER
-		Debug.Trace("[TFD][FollowTrace] RoutePreCombatOutcome FOLLOW chosenSpeaker=" + chosenSpeaker + " preCtrl=" + preCtrl)
-		preCtrl.ResolveFollowForActor(chosenSpeaker)
-		Debug.Trace("[TFD][FollowTrace] RoutePreCombatOutcome FOLLOW dispatched chosenSpeaker=" + chosenSpeaker)
-		Return True
-	ElseIf aiOutcome == OUTCOME_DO_NOTHING
-		preCtrl.ResolveDoNothing()
-		Return True
-	EndIf
-
-	Debug.Notification("TFD: Invalid PreCombat outcome.")
-	Return False
-EndFunction
-
-Bool Function ExecuteInCombatPay(Actor akSpeaker)
-	Actor playerRef = Game.GetPlayer()
-	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-	Int payAmount = GetSharedPayAmount()
-
-	If playerRef == None || Gold001 == None
-		Return False
-	EndIf
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-	If payAmount <= 0
-		Return False
-	EndIf
-
-	playerRef.RemoveItem(Gold001, payAmount, True, chosenSpeaker)
-	SendModEvent("TFDInCombatOutcomePay", ActorFormIDString(chosenSpeaker))
-	Return True
-EndFunction
-
-Bool Function ExecuteInCombatFight(Actor akSpeaker)
-	Actor playerRef = Game.GetPlayer()
-	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-
-	SendModEvent("TFDInCombatOutcomeReset", ActorFormIDString(chosenSpeaker))
-
-	If chosenSpeaker != None && playerRef != None && !chosenSpeaker.IsDead()
-		chosenSpeaker.StopCombatAlarm()
-		chosenSpeaker.StartCombat(playerRef)
-		chosenSpeaker.EvaluatePackage()
-	EndIf
-	Return True
-EndFunction
-
-Bool Function ExecuteInCombatRecruit(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-
-	If preCtrl == None
-		Return False
-	EndIf
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-
-	SendModEvent("TFDInCombatOutcomeReset", ActorFormIDString(chosenSpeaker))
-	Return preCtrl.PromoteActorAsRecruitLikeOutcome(chosenSpeaker, True)
-EndFunction
-
-Bool Function ExecuteInCombatJoinEnemy(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = GetPreCombatController()
-	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-
-	If preCtrl == None
-		Return False
-	EndIf
-	If chosenSpeaker == None || chosenSpeaker.IsDead()
-		Return False
-	EndIf
-	If !preCtrl.IsJoinEnemyOfferedByNative()
-		Debug.Notification("TFD: Join Enemy is not available here.")
-		Return False
-	EndIf
-
-	SendModEvent("TFDInCombatOutcomeReset", ActorFormIDString(chosenSpeaker))
-	Return preCtrl.BeginJoinEnemyExternal(chosenSpeaker)
-EndFunction
-
-Bool Function RouteInCombatOutcome(Int aiOutcome, Actor akSpeaker)
-	Actor chosenSpeaker = ResolveSpeaker(akSpeaker)
-
-	If aiOutcome == OUTCOME_KIDNAP
-		SendModEvent("TFDInCombatOutcomeCaptive", ActorFormIDString(chosenSpeaker))
-		Return True
-	ElseIf aiOutcome == OUTCOME_PAY
-		Return ExecuteInCombatPay(chosenSpeaker)
-	ElseIf aiOutcome == OUTCOME_FIGHT
-		Return ExecuteInCombatFight(chosenSpeaker)
-	ElseIf aiOutcome == OUTCOME_RECRUIT
-		Return ExecuteInCombatRecruit(chosenSpeaker)
-	ElseIf aiOutcome == OUTCOME_JOIN_ENEMY
-		Return ExecuteInCombatJoinEnemy(chosenSpeaker)
-	ElseIf aiOutcome == OUTCOME_RELEASE
-		Return True
-	ElseIf aiOutcome == OUTCOME_FOLLOW_PLAYER
-		Return True
-	ElseIf aiOutcome == OUTCOME_DO_NOTHING
-		SendModEvent("TFDInCombatOutcomeReset", ActorFormIDString(chosenSpeaker))
-		Return True
-	EndIf
-
-	Debug.Notification("TFD: Invalid InCombat outcome.")
-	Return False
-EndFunction
-
-; -------------------------------
-; Route: Bleedout
-; -------------------------------
-Bool Function RouteBleedoutOutcome(Int aiOutcome, Actor akSpeaker)
-	TFDBleedoutQuestScript bleedCtrl = GetBleedoutController()
-	If bleedCtrl == None
-		Return False
-	EndIf
-
-	If aiOutcome == OUTCOME_KIDNAP
-		Return bleedCtrl.ResolveKidnap()
-	ElseIf aiOutcome == OUTCOME_PAY
-		Return bleedCtrl.ResolvePay()
-	ElseIf aiOutcome == OUTCOME_RELEASE
-		Return bleedCtrl.ResolveRelease()
-	ElseIf aiOutcome == OUTCOME_DO_NOTHING
-		Return bleedCtrl.ResolveDoNothing()
-	EndIf
-
-	Debug.Notification("TFD: Invalid Bleedout outcome.")
-	Return False
-EndFunction
-
-; -------------------------------
-; Route: AfterPleasure
-; -------------------------------
-Bool Function RouteAfterPleasureOutcome(Int aiOutcome, Actor akSpeaker)
-	Debug.Trace("TFDSystemEventQuestScript: RouteAfterPleasureOutcome not wired yet for SystemEvent.")
-	Return False
-EndFunction
-
-Event OnUpdate()
-	If PendingHygienePostLoadRetries > 0
-		PendingHygienePostLoadRetries -= 1
-		RunTransientHygiene(False)
-		RegisterForSingleUpdate(HygienePostLoadRetryInterval)
-		Return
-	EndIf
-
-	If CaptiveWorkActive
-		UpdateCaptiveWorkMode()
-		Return
-	EndIf
-
-	RunTransientHygiene(False)
-EndEvent
-
-; -------------------------------
-; Future routes - placeholder
-; -------------------------------
-Bool Function RouteCaptiveOutcome(Int aiOutcome, Actor akSpeaker)
-	TFDCaptiveBridge captiveBridgeCtrl = GetCaptiveBridgeController()
-	TFDBleedoutQuestScript bleedCtrl = GetBleedoutController()
-	Actor bleedSpeaker = None
-
-	If bleedCtrl != None
-		bleedSpeaker = bleedCtrl.GetSpeaker()
-	EndIf
-
-	If bleedSpeaker != None && !bleedSpeaker.IsDead()
-		If aiOutcome == OUTCOME_KIDNAP || aiOutcome == OUTCOME_PAY || aiOutcome == OUTCOME_DO_NOTHING
-			Return RouteBleedoutOutcome(aiOutcome, bleedSpeaker)
-		EndIf
-	EndIf
-
-	If aiOutcome == OUTCOME_WORK
-		Return BeginCaptiveWorkMode(akSpeaker)
-	ElseIf aiOutcome == OUTCOME_DO_NOTHING
-		If CaptiveWorkActive
-			StopCaptiveWorkMode(True, False, "captor_do_nothing")
-			Return True
-		EndIf
-		If captiveBridgeCtrl != None
-			captiveBridgeCtrl.CommitCaptiveChoice()
-			captiveBridgeCtrl.ReleaseOwnedCaptor()
-			Return True
-		EndIf
-		Return False
-	EndIf
-
-	Debug.Notification("TFD: Captive outcome router not wired yet.")
-	Return False
-EndFunction
-
-Bool Function RouteVictoryOutcome(Int aiOutcome, Actor akSpeaker)
-	Debug.Notification("TFD: Victory outcome router not wired yet.")
-	Return False
-EndFunction
-
-Bool Function RouteSaviorOutcome(Int aiOutcome, Actor akSpeaker)
-	Debug.Notification("TFD: Savior outcome router not wired yet.")
-	Return False
-EndFunction
-
-Bool Function RouteRecruitContractOutcome(Int aiOutcome, Actor akSpeaker)
-	Debug.Notification("TFD: Recruit contract router not wired yet.")
-	Return False
-EndFunction
-
-Bool Function RouteCreatureBleedoutOutcome(Int aiOutcome, Actor akSpeaker)
-	Debug.Notification("TFD: Creature bleedout router not wired yet.")
-	Return False
-EndFunction
-
-Bool Function RouteCreatureTruceOutcome(Int aiOutcome, Actor akSpeaker)
-	Debug.Notification("TFD: Creature truce router not wired yet.")
-	Return False
 EndFunction

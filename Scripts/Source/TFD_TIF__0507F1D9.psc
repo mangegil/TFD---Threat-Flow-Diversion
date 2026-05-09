@@ -6,7 +6,10 @@ Scriptname TFD_TIF__0507F1D9 Extends TopicInfo Hidden
 Function Fragment_3(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
-(TFDSystemEventQuest as TFDSystemEventQuestScript).ResolveRelease(akSpeaker)
+TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
+If sys != None
+	sys.ResolveRelease(akSpeaker)
+EndIf
 ;END CODE
 EndFunction
 ;END FRAGMENT

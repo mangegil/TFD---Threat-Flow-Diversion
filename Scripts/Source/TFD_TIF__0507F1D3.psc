@@ -6,11 +6,9 @@ Scriptname TFD_TIF__0507F1D3 Extends TopicInfo Hidden
 Function Fragment_3(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
-;AFTER PLEASURE JOIN ENEMY
-
-TFDPleasureQuestScript pleasureCtrl = (TFDPleasureQuest as TFDPleasureQuestScript)
-If pleasureCtrl != None
-	pleasureCtrl.ChooseJoinEnemy()
+TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
+If sys != None
+	sys.ResolveJoinEnemy(akSpeaker)
 EndIf
 ;END CODE
 EndFunction
@@ -18,4 +16,4 @@ EndFunction
 
 ;END FRAGMENT CODE - Do not edit anything between this and the begin comment
 
-Quest Property TFDPleasureQuest auto
+Quest Property TFDSystemEventQuest Auto

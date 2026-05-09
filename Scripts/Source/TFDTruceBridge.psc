@@ -26,12 +26,20 @@ Float Property UpdateInterval = 0.35 Auto
 Float Property PostLoadRetryInterval = 0.75 Auto
 Int Property PostLoadRetryCount = 4 Auto
 
+Bool Property AllowCrowdMoveToAssist = True Auto
+Float Property CrowdAssistSkipDistance = 520.0 Auto
+
+Faction Property TFDTeammateFaction Auto
+Faction Property TFDExpiredTeammate Auto
+
 Int _pendingPostLoadRetries = 0
 
 Function RegisterEvents()
     UnregisterForAllModEvents()
     RegisterForModEvent("TFDTruceAssign", "OnBridgeEvent")
     RegisterForModEvent("TFDTruceUnassign", "OnBridgeEvent")
+    RegisterForModEvent("TFDTrucePromoteSpeaker", "OnBridgeEvent")
+    RegisterForModEvent("TFDTruceApproachAssist", "OnBridgeEvent")
     RegisterForModEvent("TFDTruceClearAll", "OnBridgeEvent")
     TraceDebug("RegisterEvents done")
 EndFunction
@@ -76,6 +84,23 @@ Event OnBridgeEvent(String eventName, String strArg, Float numArg, Form sender)
         else
             TraceDebug("Unassign ignored: sender is not Actor")
         endif
+        return
+    endif
+
+
+    if eventName == "TFDTrucePromoteSpeaker"
+        Actor aPromote = sender as Actor
+        if aPromote != None
+            ClearActorNoRestore(aPromote, "promote_speaker")
+        else
+            TraceDebug("PromoteSpeaker ignored: sender is not Actor")
+        endif
+        return
+    endif
+
+    if eventName == "TFDTruceApproachAssist"
+        Actor aAssistSpeaker = sender as Actor
+        AssistCrowdNearPlayer(aAssistSpeaker, strArg)
         return
     endif
 
@@ -164,6 +189,31 @@ Function ClearActor(Actor a)
     DumpSlots("ClearActor after clear")
 EndFunction
 
+Function ClearActorNoRestore(Actor a, String asReason = "")
+    if a == None
+        TraceDebug("ClearActorNoRestore ignored: actor=None reason=" + asReason)
+        return
+    endif
+
+    TraceDebug("ClearActorNoRestore begin reason=" + asReason + " actor=" + ActorLabel(a))
+
+    ReferenceAlias slot = FindSlotHolding(a)
+    if slot == None
+        TraceDebug("ClearActorNoRestore no slot holds actor=" + ActorLabel(a) + " reason=" + asReason)
+        DumpSlots("ClearActorNoRestore no slot")
+        return
+    endif
+
+    if slot.GetReference() != None
+        slot.Clear()
+        TraceDebug("ClearActorNoRestore cleared slot=" + SlotName(slot) + " reason=" + asReason)
+    endif
+
+    ; Promotion to Speaker is an ownership transfer, not a return to normal AI.
+    ; Do not EvaluatePackage here; TFDPreCombatQuest owns the new speaker package.
+    DumpSlots("ClearActorNoRestore after clear")
+EndFunction
+
 Function ClearAll()
     TraceDebug("ClearAll begin")
     DumpSlots("ClearAll before")
@@ -205,6 +255,160 @@ Function ClearAll()
     TraceDebug("ClearAll end")
 EndFunction
 
+Function AssistCrowdNearPlayer(Actor speaker, String reason = "")
+    if !AllowCrowdMoveToAssist
+        TraceDebug("AssistCrowdNearPlayer ignored: disabled")
+        return
+    endif
+
+    Actor playerRef = Game.GetPlayer()
+    if playerRef == None
+        TraceDebug("AssistCrowdNearPlayer ignored: player=None")
+        return
+    endif
+
+    TraceDebug("AssistCrowdNearPlayer begin speaker=" + ActorLabel(speaker) + " reason=" + reason)
+
+    Int moved = 0
+    moved += AssistCrowdAliasNearPlayer(Crowd01, playerRef, speaker, 1, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd02, playerRef, speaker, 2, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd03, playerRef, speaker, 3, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd04, playerRef, speaker, 4, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd05, playerRef, speaker, 5, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd06, playerRef, speaker, 6, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd07, playerRef, speaker, 7, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd08, playerRef, speaker, 8, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd09, playerRef, speaker, 9, reason)
+    moved += AssistCrowdAliasNearPlayer(Crowd10, playerRef, speaker, 10, reason)
+
+    TraceDebug("AssistCrowdNearPlayer end moved=" + moved + " reason=" + reason)
+EndFunction
+
+Int Function AssistCrowdAliasNearPlayer(ReferenceAlias al, Actor playerRef, Actor speaker, Int slotIndex, String reason = "")
+    Actor a = GetAliasActor(al)
+    if a == None
+        return 0
+    endif
+
+    if speaker != None && a == speaker
+        return 0
+    endif
+
+    if a.IsDead()
+        TraceDebug("AssistCrowdAliasNearPlayer skip dead alias=" + SlotName(al))
+        return 0
+    endif
+
+    if !a.Is3DLoaded()
+        TraceDebug("AssistCrowdAliasNearPlayer skip unloaded alias=" + SlotName(al) + " actor=" + ActorLabel(a))
+        return 0
+    endif
+
+    if IsConvertedOrPlayerTeammate(a)
+        TraceDebug("AssistCrowdAliasNearPlayer skip converted teammate alias=" + SlotName(al) + " actor=" + ActorLabel(a))
+        return 0
+    endif
+
+    Float beforeDist = a.GetDistance(playerRef)
+    if beforeDist <= CrowdAssistSkipDistance
+        KickCrowdAI(a)
+        TraceDebug("AssistCrowdAliasNearPlayer skip near alias=" + SlotName(al) + " actor=" + ActorLabel(a) + " dist=" + beforeDist)
+        return 0
+    endif
+
+    Float xOffset = CrowdAssistOffsetX(slotIndex)
+    Float yOffset = CrowdAssistOffsetY(slotIndex)
+
+    a.MoveTo(playerRef, xOffset, yOffset, 0.0, True)
+
+    if a.IsInCombat()
+        a.StopCombat()
+        a.StopCombatAlarm()
+    endif
+
+    if a.IsWeaponDrawn()
+        a.SheatheWeapon()
+    endif
+
+    if AllowAutoPackageEval
+        a.EvaluatePackage()
+    endif
+
+    Float afterDist = a.GetDistance(playerRef)
+    TraceDebug("AssistCrowdAliasNearPlayer moved alias=" + SlotName(al) + " actor=" + ActorLabel(a) + " beforeDist=" + beforeDist + " afterDist=" + afterDist + " reason=" + reason)
+    return 1
+EndFunction
+
+Float Function CrowdAssistOffsetX(Int slotIndex)
+    if slotIndex == 1
+        return 180.0
+    endif
+    if slotIndex == 2
+        return -180.0
+    endif
+    if slotIndex == 3
+        return 260.0
+    endif
+    if slotIndex == 4
+        return -260.0
+    endif
+    if slotIndex == 5
+        return 120.0
+    endif
+    if slotIndex == 6
+        return -120.0
+    endif
+    if slotIndex == 7
+        return 320.0
+    endif
+    if slotIndex == 8
+        return -320.0
+    endif
+    if slotIndex == 9
+        return 0.0
+    endif
+    if slotIndex == 10
+        return 0.0
+    endif
+
+    return 220.0
+EndFunction
+
+Float Function CrowdAssistOffsetY(Int slotIndex)
+    if slotIndex == 1
+        return 260.0
+    endif
+    if slotIndex == 2
+        return 260.0
+    endif
+    if slotIndex == 3
+        return 340.0
+    endif
+    if slotIndex == 4
+        return 340.0
+    endif
+    if slotIndex == 5
+        return 420.0
+    endif
+    if slotIndex == 6
+        return 420.0
+    endif
+    if slotIndex == 7
+        return 500.0
+    endif
+    if slotIndex == 8
+        return 500.0
+    endif
+    if slotIndex == 9
+        return 300.0
+    endif
+    if slotIndex == 10
+        return 560.0
+    endif
+
+    return 300.0
+EndFunction
+
 Function MaintainAllActors()
     PruneInvalidSlots()
     MaintainAliasActor(Crowd01)
@@ -232,6 +436,17 @@ Function MaintainAliasActor(ReferenceAlias al)
     endif
 
     if !a.Is3DLoaded()
+        return
+    endif
+
+    if IsNativeConvertedTeammate(a)
+        TraceDebug("MaintainAliasActor native converted teammate -> clear alias=" + SlotName(al) + " actor=" + ActorLabel(a))
+        al.Clear()
+        return
+    endif
+
+    if a.IsPlayerTeammate()
+        TraceDebug("MaintainAliasActor player teammate without native marker -> keep alias actor=" + ActorLabel(a))
         return
     endif
 
@@ -264,6 +479,11 @@ Function KickCrowdAI(Actor a)
         return
     endif
 
+    if IsConvertedOrPlayerTeammate(a)
+        TraceDebug("KickCrowdAI skip converted teammate actor=" + ActorLabel(a))
+        return
+    endif
+
     if a.IsInCombat()
         a.StopCombat()
         a.StopCombatAlarm()
@@ -293,12 +513,49 @@ Function RestoreNormalAI(Actor a)
         return
     endif
 
+    if IsConvertedOrPlayerTeammate(a)
+        TraceDebug("RestoreNormalAI skip converted teammate actor=" + ActorLabel(a))
+        return
+    endif
+
     ; IMPORTANT:
     ; On unassign/clear, do NOT stop combat or force sheathe.
     ; Native side owns hostility recovery and rehostile decisions.
     ; This bridge only stops maintaining the calm surround state.
     a.EvaluatePackage()
     TraceDebug("RestoreNormalAI lightweight EvaluatePackage done")
+EndFunction
+
+Bool Function IsNativeConvertedTeammate(Actor a)
+    if a == None
+        return False
+    endif
+
+    if TFDTeammateFaction != None && a.IsInFaction(TFDTeammateFaction)
+        return True
+    endif
+
+    if TFDExpiredTeammate != None && a.IsInFaction(TFDExpiredTeammate)
+        return True
+    endif
+
+    return False
+EndFunction
+
+Bool Function IsConvertedOrPlayerTeammate(Actor a)
+    if a == None
+        return False
+    endif
+
+    if a.IsPlayerTeammate()
+        return True
+    endif
+
+    if IsNativeConvertedTeammate(a)
+        return True
+    endif
+
+    return False
 EndFunction
 
 Function PruneInvalidSlots()
@@ -325,6 +582,12 @@ Function PruneAliasIfInvalid(ReferenceAlias al)
 
     if a.IsDead()
         TraceDebug("PruneAliasIfInvalid dead -> clear alias=" + SlotName(al))
+        al.Clear()
+        return
+    endif
+
+    if IsNativeConvertedTeammate(a)
+        TraceDebug("PruneAliasIfInvalid native converted teammate -> clear alias=" + SlotName(al) + " actor=" + ActorLabel(a))
         al.Clear()
         return
     endif

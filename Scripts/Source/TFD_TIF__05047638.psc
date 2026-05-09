@@ -8,10 +8,7 @@ Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
 TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
 If sys != None
-	Bool ok = sys.ResolveFollowPlayer(akSpeaker)
-	Debug.Trace("[TFD][FollowTrace] TIF 05047638 ResolveFollowPlayer returned=" + ok + " speaker=" + akSpeaker)
-Else
-	Debug.Trace("[TFD][FollowTrace] TIF 05047638 sys is NONE")
+	sys.ResolveFollowPlayer(akSpeaker)
 EndIf
 ;END CODE
 EndFunction
@@ -19,4 +16,4 @@ EndFunction
 
 ;END FRAGMENT CODE - Do not edit anything between this and the begin comment
 
-Quest Property TFDSystemEventQuest  Auto  
+Quest Property TFDSystemEventQuest Auto

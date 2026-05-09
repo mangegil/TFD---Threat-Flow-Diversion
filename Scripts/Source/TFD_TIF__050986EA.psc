@@ -6,11 +6,10 @@ Scriptname TFD_TIF__050986EA Extends TopicInfo Hidden
 Function Fragment_2(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
-TFDPleasureQuestScript pleasureCtrl = (TFDPleasureQuest as TFDPleasureQuestScript)
-	If pleasureCtrl != None
-		pleasureCtrl.ChooseRedo()
-	Else
-		Debug.Trace("TFD_TIF__050986EA Fragment_1: TFDPleasureQuest property is None")
+;TEAMMATE PAY
+TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
+If sys != None
+	sys.ResolveTeammateExtendContractGold(akSpeaker)
 EndIf
 ;END CODE
 EndFunction
@@ -18,5 +17,4 @@ EndFunction
 
 ;END FRAGMENT CODE - Do not edit anything between this and the begin comment
 
-Quest Property TFDPleasureQuest Auto
-Quest Property TFDSystemEventQuest  Auto  
+Quest Property TFDSystemEventQuest Auto

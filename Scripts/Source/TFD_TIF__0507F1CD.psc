@@ -6,9 +6,10 @@ Scriptname TFD_TIF__0507F1CD Extends TopicInfo Hidden
 Function Fragment_0(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
-TFDPleasureQuestScript pleasureCtrl = (TFDPleasureQuest as TFDPleasureQuestScript)
-If pleasureCtrl != None
-	pleasureCtrl.ResolvePleasure()
+;VICTORY PLEASURE
+TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
+If sys != None
+	sys.ResolvePleasure(akSpeaker)
 EndIf
 ;END CODE
 EndFunction
@@ -16,4 +17,4 @@ EndFunction
 
 ;END FRAGMENT CODE - Do not edit anything between this and the begin comment
 
-Quest Property TFDPleasureQuest Auto
+Quest Property TFDSystemEventQuest Auto

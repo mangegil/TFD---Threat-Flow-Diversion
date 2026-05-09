@@ -1,16 +1,14 @@
 ;BEGIN FRAGMENT CODE - Do not edit anything between this and the end comment
-;NEXT FRAGMENT INDEX 4
+;NEXT FRAGMENT INDEX 6
 Scriptname TFD_TIF__0504763A Extends TopicInfo Hidden
 
-;BEGIN FRAGMENT Fragment_3
-Function Fragment_3(ObjectReference akSpeakerRef)
+;BEGIN FRAGMENT Fragment_5
+Function Fragment_5(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
 TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
 If sys != None
 	sys.ResolveRecruit(akSpeaker)
-Else
-	Debug.Trace("TFD_TIF__0504763A: TFDSystemEventQuest property is None")
 EndIf
 ;END CODE
 EndFunction
@@ -18,4 +16,4 @@ EndFunction
 
 ;END FRAGMENT CODE - Do not edit anything between this and the begin comment
 
-Quest Property TFDSystemEventQuest  Auto  
+Quest Property TFDSystemEventQuest Auto

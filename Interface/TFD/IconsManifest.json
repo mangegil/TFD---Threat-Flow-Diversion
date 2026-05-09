@@ -1,0 +1,409 @@
+[
+  {
+    "file": "State_BossCreature.png",
+    "source_size": [
+      457,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      386,
+      432
+    ],
+    "offset": [
+      63,
+      40
+    ]
+  },
+  {
+    "file": "State_BossEnemy.png",
+    "source_size": [
+      334,
+      474
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      304,
+      432
+    ],
+    "offset": [
+      104,
+      40
+    ]
+  },
+  {
+    "file": "State_Captive.png",
+    "source_size": [
+      454,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      383,
+      432
+    ],
+    "offset": [
+      64,
+      40
+    ]
+  },
+  {
+    "file": "State_CaptiveEscape.png",
+    "source_size": [
+      511,
+      470
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      432,
+      397
+    ],
+    "offset": [
+      40,
+      57
+    ]
+  },
+  {
+    "file": "State_Defeat.png",
+    "source_size": [
+      462,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      390,
+      432
+    ],
+    "offset": [
+      61,
+      40
+    ]
+  },
+  {
+    "file": "State_Enemy.png",
+    "source_size": [
+      408,
+      511
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      345,
+      432
+    ],
+    "offset": [
+      83,
+      40
+    ]
+  },
+  {
+    "file": "State_EnemyCreature.png",
+    "source_size": [
+      454,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      383,
+      432
+    ],
+    "offset": [
+      64,
+      40
+    ]
+  },
+  {
+    "file": "State_Incombat.png",
+    "source_size": [
+      499,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      421,
+      432
+    ],
+    "offset": [
+      45,
+      40
+    ]
+  },
+  {
+    "file": "State_JoinEnemy.png",
+    "source_size": [
+      511,
+      511
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      432,
+      432
+    ],
+    "offset": [
+      40,
+      40
+    ]
+  },
+  {
+    "file": "State_LeftforDead.png",
+    "source_size": [
+      410,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      346,
+      432
+    ],
+    "offset": [
+      83,
+      40
+    ]
+  },
+  {
+    "file": "State_Negotiate.png",
+    "source_size": [
+      511,
+      439
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      432,
+      371
+    ],
+    "offset": [
+      40,
+      70
+    ]
+  },
+  {
+    "file": "State_Neutral.png",
+    "source_size": [
+      502,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      424,
+      432
+    ],
+    "offset": [
+      44,
+      40
+    ]
+  },
+  {
+    "file": "State_Pleasure.png",
+    "source_size": [
+      512,
+      437
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      432,
+      369
+    ],
+    "offset": [
+      40,
+      71
+    ]
+  },
+  {
+    "file": "State_PleasureReject.png",
+    "source_size": [
+      512,
+      464
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      432,
+      392
+    ],
+    "offset": [
+      40,
+      60
+    ]
+  },
+  {
+    "file": "State_Precombat.png",
+    "source_size": [
+      481,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      406,
+      432
+    ],
+    "offset": [
+      53,
+      40
+    ]
+  },
+  {
+    "file": "State_Release.png",
+    "source_size": [
+      512,
+      510
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      432,
+      430
+    ],
+    "offset": [
+      40,
+      41
+    ]
+  },
+  {
+    "file": "State_Rescue.png",
+    "source_size": [
+      496,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      418,
+      432
+    ],
+    "offset": [
+      47,
+      40
+    ]
+  },
+  {
+    "file": "State_Teammate.png",
+    "source_size": [
+      406,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      343,
+      432
+    ],
+    "offset": [
+      84,
+      40
+    ]
+  },
+  {
+    "file": "State_TeammateCreature.png",
+    "source_size": [
+      414,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      349,
+      432
+    ],
+    "offset": [
+      81,
+      40
+    ]
+  },
+  {
+    "file": "State_TemporaryTeammate.png",
+    "source_size": [
+      420,
+      512
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      354,
+      432
+    ],
+    "offset": [
+      79,
+      40
+    ]
+  },
+  {
+    "file": "State_Victory.png",
+    "source_size": [
+      512,
+      409
+    ],
+    "normalized_size": [
+      512,
+      512
+    ],
+    "placed_size": [
+      432,
+      345
+    ],
+    "offset": [
+      40,
+      83
+    ]
+  },
+  {
+    "file": "State_BossHumanoid.png",
+    "alias_of": "State_BossEnemy.png",
+    "normalized_size": [
+      512,
+      512
+    ]
+  }
+]

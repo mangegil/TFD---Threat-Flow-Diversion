@@ -9,8 +9,6 @@ Actor akSpeaker = akSpeakerRef as Actor
 TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
 If sys != None
 	sys.ResolveDoNothing(akSpeaker)
-Else
-	Debug.Trace("TFD_TIF__0504764F: TFDSystemEventQuest property is None")
 EndIf
 ;END CODE
 EndFunction

@@ -13,7 +13,11 @@ Float Property AliasRetryDelay = 0.20 Auto
 Int Property AliasRetryMax = 12 Auto
 Float Property CleanupDelay = 0.35 Auto
 Float Property RedoStartDelay = 0.12 Auto
+Float Property PreCombatAutoStartDelay = 0.35 Auto
+Float Property SceneStartWatchdogDelay = 0.25 Auto
+Float Property SceneStartTimeout = 4.00 Auto
 Float Property NeutralReleaseGraceDuration = 10.0 Auto
+Float Property MinOStimSceneDurationForAfterPleasure = 1.50 Auto
 
 Int PhaseIdle = 0
 Int PhasePleasureDialogue = 1
@@ -29,11 +33,20 @@ Int SourceBleedout = 2
 Int SourceCaptive = 3
 Int SourceVictory = 4
 Int SourceTeammate = 5
+Int SourceInCombat = 6
+
+String CaptiveRequestWorkEvent = "TFDCaptiveRequestWork"
+String CaptiveRequestReturnEvent = "TFDCaptiveRequestReturn"
+String CaptiveRequestReleaseEvent = "TFDCaptiveRequestRelease"
+String CaptiveRequestEscapeEvent = "TFDCaptiveRequestEscape"
+String PreCombatOutcomeCaptiveEvent = "TFDPreCombatOutcomeCaptive"
 
 Int UpdateModeNone = 0
 Int UpdateModeAliasAcquire = 1
 Int UpdateModeCleanup = 2
 Int UpdateModeRedoStart = 3
+Int UpdateModeDeferredAutoStart = 4
+Int UpdateModeSceneStartWatchdog = 5
 
 Actor PendingSpeaker
 Actor ActiveSpeaker
@@ -43,6 +56,9 @@ Int CurrentSourceFlow = 0
 Int CurrentCycleId = 0
 Int CurrentThreadId = -1
 Int CurrentUpdateMode = 0
+Float SceneRunningStartAt = 0.0
+Float SceneStartPendingAt = 0.0
+String PendingAutoStartReason = ""
 
 Bool AwaitingSceneStart = False
 Bool AwaitingAfterPleasure = False
@@ -70,13 +86,16 @@ EndEvent
 
 Function RegisterEvents()
 	UnregisterForAllModEvents()
+	UnregisterForMenu("Dialogue Menu")
 	RegisterForModEvent("TFDPleasureAssign", "OnPleasureAssign")
 	RegisterForModEvent("TFDPleasureClear", "OnPleasureClear")
 	RegisterForModEvent("TFDPleasureAbort", "OnPleasureAbort")
+	RegisterForModEvent("TFDInCombatEmergencyCancel", "OnInCombatEmergencyCancel")
 	RegisterForModEvent("TFDPleasureBeginAfter", "OnPleasureBeginAfter")
 	RegisterForModEvent("ostim_thread_start", "OnOStimThreadStart")
 	RegisterForModEvent("ostim_thread_end", "OnOStimThreadEnd")
 	RegisterForModEvent("ostim_end", "OnOStimEnd")
+	RegisterForMenu("Dialogue Menu")
 	Debug.Trace("[TFD][PleasureQuest] RegisterEvents done")
 EndFunction
 
@@ -101,6 +120,9 @@ Function BeginPleasure(Actor akSpeaker, Int aiSourceFlow, Int aiCycleId = 0)
 	CleanupArmed = False
 	BranchChoiceLocked = False
 	PendingAutoPleasureStart = False
+	SceneRunningStartAt = 0.0
+	SceneStartPendingAt = 0.0
+	PendingAutoStartReason = ""
 
 	CurrentPhase = PhasePleasureDialogue
 	PendingOpenReason = "pleasure_begin"
@@ -110,6 +132,39 @@ Function BeginPleasure(Actor akSpeaker, Int aiSourceFlow, Int aiCycleId = 0)
 
 	ForceCoreAliases()
 	BeginAliasAcquire("pleasure_begin")
+EndFunction
+
+Bool Function BeginPleasureAutoStart(Actor akSpeaker, Int aiSourceFlow, Int aiCycleId = 0, String asReason = "")
+	BeginPleasure(akSpeaker, aiSourceFlow, aiCycleId)
+
+	If !QuestActive
+		Debug.Trace("[TFD][PleasureQuest] BeginPleasureAutoStart failed inactive reason=" + asReason)
+		Return False
+	EndIf
+
+	PendingAutoPleasureStart = True
+	PendingAutoStartReason = asReason
+	Debug.Trace("[TFD][PleasureQuest] BeginPleasureAutoStart armed reason=" + asReason + " speaker=" + SafeActorName(ResolveCurrentSpeaker()) + " phase=" + CurrentPhase + " source=" + aiSourceFlow)
+
+	If aiSourceFlow == SourcePreCombat
+		ArmDeferredAutoStart("precombat_auto_start_delay")
+		Return True
+	EndIf
+
+	If aiSourceFlow == SourceInCombat
+		; R93Z: InCombat pleasure is also a combat-to-scene handoff.  Give native
+		; suppression one update window just like PreCombat before QuickStart.
+		ArmDeferredAutoStart("incombat_auto_start_delay")
+		Return True
+	EndIf
+
+	If AreCoreAliasesValid()
+		Debug.Trace("[TFD][PleasureQuest] BeginPleasureAutoStart immediate start reason=" + asReason)
+		Return ChoosePleasure()
+	EndIf
+
+	Debug.Trace("[TFD][PleasureQuest] BeginPleasureAutoStart waiting alias reason=" + asReason)
+	Return True
 EndFunction
 
 Function BeginAfterPleasure()
@@ -155,8 +210,12 @@ Function AbortPleasureToNeutral(String asReason = "", Bool abStartCombat = False
 	Actor speakerRef = ResolveCurrentSpeaker()
 	Debug.Trace("[TFD][PleasureQuest] AbortPleasureToNeutral reason=" + asReason + " startCombat=" + BoolText(abStartCombat) + " phase=" + CurrentPhase + " source=" + CurrentSourceFlow + " thread=" + CurrentThreadId)
 
-	If abSendAbortEvent && !FinalOutcomeSent
-		SendPackageEvent("TFDPleasureAborted", asReason, 0.0)
+	If !FinalOutcomeSent
+		If abSendAbortEvent
+			SendPackageEvent("TFDPleasureAborted", asReason, 0.0)
+		EndIf
+		FinalOutcomeSent = True
+		BranchChoiceLocked = True
 	EndIf
 
 	ReleaseSourceFlowFallback(speakerRef, abStartCombat)
@@ -165,6 +224,100 @@ EndFunction
 
 Function AbortPleasureFromCombat(String asReason = "combat_break")
 	AbortPleasureToNeutral(asReason, True, True)
+EndFunction
+
+Function EmergencyAbortInCombatPleasure(String asReason = "incombat_emergency_cancel")
+	If !QuestActive
+		Return
+	EndIf
+
+	Actor speakerRef = ResolveCurrentSpeaker()
+	Debug.Trace("[TFD][PleasureQuest][R97A] EmergencyAbortInCombatPleasure reason=" + asReason + " speaker=" + SafeActorName(speakerRef) + " phase=" + CurrentPhase + " thread=" + CurrentThreadId)
+
+	StopPendingOStimThread(asReason)
+	If !FinalOutcomeSent
+		SendPackageEvent("TFDPleasureAborted", asReason, CurrentThreadId as Float)
+		FinalOutcomeSent = True
+	EndIf
+
+	BranchChoiceLocked = True
+	CleanupPleasureNow(asReason)
+	Game.EnablePlayerControls()
+EndFunction
+
+Function SuppressPreCombatSceneCombat(String asReason = "")
+	Actor playerRef = Game.GetPlayer()
+	Actor speakerRef = ResolveCurrentSpeaker()
+	Debug.Trace("[TFD][PleasureQuest] SuppressPreCombatSceneCombat reason=" + asReason + " speaker=" + SafeActorName(speakerRef))
+
+	If speakerRef != None && speakerRef.Is3DLoaded()
+		speakerRef.StopCombat()
+		speakerRef.StopCombatAlarm()
+		speakerRef.SheatheWeapon()
+		speakerRef.EvaluatePackage()
+	EndIf
+
+	If playerRef != None
+		playerRef.StopCombat()
+	EndIf
+EndFunction
+
+Bool Function IsSceneCombatUnsafe(String asReason = "")
+	Actor playerRef = Game.GetPlayer()
+	Actor speakerRef = ResolveCurrentSpeaker()
+
+	If playerRef != None && playerRef.IsInCombat()
+		If CurrentSourceFlow == SourceInCombat
+			SuppressPreCombatSceneCombat(asReason + "_incombat_player_stale_combat")
+			Debug.Trace("[TFD][PleasureQuest][R93Z] SceneCombatUnsafe ignored incombat player stale combat reason=" + asReason + " speaker=" + SafeActorName(speakerRef))
+			Return False
+		EndIf
+		Debug.Trace("[TFD][PleasureQuest] SceneCombatUnsafe reason=" + asReason + " playerInCombat=true speaker=" + SafeActorName(speakerRef))
+		Return True
+	EndIf
+
+	If speakerRef != None && speakerRef.IsInCombat()
+		If CurrentSourceFlow == SourcePreCombat || CurrentSourceFlow == SourceInCombat
+			SuppressPreCombatSceneCombat(asReason + "_speaker_stale_combat")
+			Debug.Trace("[TFD][PleasureQuest][R93Z] SceneCombatUnsafe ignored passive-handoff speaker stale combat reason=" + asReason + " source=" + CurrentSourceFlow + " speaker=" + SafeActorName(speakerRef))
+			Return False
+		EndIf
+
+		Debug.Trace("[TFD][PleasureQuest] SceneCombatUnsafe reason=" + asReason + " speakerInCombat=true speaker=" + SafeActorName(speakerRef))
+		Return True
+	EndIf
+
+	Return False
+EndFunction
+
+Float Function GetSceneRunningDuration()
+	If SceneRunningStartAt <= 0.0
+		Return 0.0
+	EndIf
+	Return Utility.GetCurrentRealTime() - SceneRunningStartAt
+EndFunction
+
+Function FailPleasureScene(String asReason = "scene_failed", Bool abStartCombat = True)
+	Actor speakerRef = ResolveCurrentSpeaker()
+	Debug.Trace("[TFD][PleasureQuest] FailPleasureScene reason=" + asReason + " startCombat=" + BoolText(abStartCombat) + " duration=" + GetSceneRunningDuration() + " speaker=" + SafeActorName(speakerRef) + " phase=" + CurrentPhase + " thread=" + CurrentThreadId)
+
+	If FinalOutcomeSent
+		Debug.Trace("[TFD][PleasureQuest] FailPleasureScene ignored duplicate reason=" + asReason)
+		Return
+	EndIf
+
+	FinalOutcomeSent = True
+	BranchChoiceLocked = True
+
+	If speakerRef != None
+		SendRuntimeSceneEvent("TFDPreCombatPleasureFailed", speakerRef, CurrentSourceFlow, CurrentThreadId)
+	Else
+		SendPackageEvent("TFDPreCombatPleasureFailed", asReason, CurrentThreadId as Float)
+	EndIf
+
+	SceneRunningStartAt = 0.0
+	SceneStartPendingAt = 0.0
+	AbortPleasureToNeutral(asReason, abStartCombat, False)
 EndFunction
 
 Actor Function ResolveCurrentSpeaker()
@@ -215,7 +368,7 @@ Function SetSourceCaptive()
 EndFunction
 
 Function SetSourceInCombat()
-	CurrentSourceFlow = SourceBleedout
+	CurrentSourceFlow = SourceInCombat
 EndFunction
 
 Function ResetSource()
@@ -326,6 +479,18 @@ Event OnPleasureAbort(String eventName, String strArg, Float numArg, Form sender
 	AbortPleasure("native_abort")
 EndEvent
 
+Event OnInCombatEmergencyCancel(String eventName, String strArg, Float numArg, Form sender)
+	If !QuestActive
+		Return
+	EndIf
+	If CurrentSourceFlow != SourceInCombat
+		Debug.Trace("[TFD][PleasureQuest][R97A] InCombatEmergencyCancel ignored source=" + CurrentSourceFlow)
+		Return
+	EndIf
+
+	EmergencyAbortInCombatPleasure("incombat_emergency_cancel")
+EndEvent
+
 Event OnPleasureBeginAfter(String eventName, String strArg, Float numArg, Form sender)
 	If !QuestActive
 		Debug.Trace("[TFD][PleasureQuest] OnPleasureBeginAfter ignored inactive")
@@ -355,7 +520,11 @@ Event OnOStimThreadStart(String eventName, String strArg, Float threadID, Form s
 	CurrentThreadId = incomingThread
 	AwaitingSceneStart = False
 	BranchChoiceLocked = False
+	CurrentUpdateMode = UpdateModeNone
+	UnregisterForUpdate()
 	CurrentPhase = PhaseSceneRunning
+	SceneRunningStartAt = Utility.GetCurrentRealTime()
+	SceneStartPendingAt = 0.0
 	UpdatePleasureState(1)
 	ForceCoreAliases()
 	Debug.Trace("[TFD][PleasureQuest] OnOStimThreadStart accepted thread=" + CurrentThreadId + " speaker=" + SafeActorName(ResolveCurrentSpeaker()))
@@ -369,6 +538,87 @@ EndEvent
 Event OnOStimEnd(String eventName, String jsonArg, Float numArg, Form sender)
 	HandleSceneEndedFromOStim(FloatToIntSafe(numArg, -1), "ostim_end")
 EndEvent
+
+Event OnMenuClose(String menuName)
+	If menuName != "Dialogue Menu"
+		Return
+	EndIf
+
+	If ShouldCleanupAfterPleasureNoCommit()
+		CleanupAfterPleasureNoCommit("dialogue_menu_closed_no_commit")
+	EndIf
+EndEvent
+
+Bool Function IsQuestRuntimeActive()
+	Return QuestActive
+EndFunction
+
+Bool Function ShouldBlockTeammateGreet(Actor akSpeaker = None)
+	If !QuestActive
+		Return False
+	EndIf
+
+	If CurrentPhase == PhaseIdle
+		Return False
+	EndIf
+
+	If CurrentPhase == PhaseFinalizing && FinalOutcomeSent
+		Return False
+	EndIf
+
+	Return True
+EndFunction
+
+Bool Function ShouldCleanupAfterPleasureNoCommit()
+	If !QuestActive
+		Return False
+	EndIf
+
+	If CurrentPhase != PhaseAfterPleasureDialogue
+		Return False
+	EndIf
+
+	If !AfterPleasureDialogueOpened
+		Return False
+	EndIf
+
+	If BranchChoiceLocked || FinalOutcomeSent
+		Return False
+	EndIf
+
+	Return True
+EndFunction
+
+Function CleanupAfterPleasureNoCommit(String asReason = "")
+	Actor speakerRef = ResolveCurrentSpeaker()
+
+	If !ShouldCleanupAfterPleasureNoCommit()
+		Debug.Trace("[TFD][PleasureQuest] CleanupAfterPleasureNoCommit ignored reason=" + asReason + " phase=" + CurrentPhase + " final=" + BoolText(FinalOutcomeSent))
+		Return
+	EndIf
+
+	If asReason == ""
+		asReason = "after_pleasure_no_commit"
+	EndIf
+
+	Debug.Trace("[TFD][PleasureQuest] CleanupAfterPleasureNoCommit reason=" + asReason + " speaker=" + SafeActorName(speakerRef) + " source=" + CurrentSourceFlow + " thread=" + CurrentThreadId)
+
+	BranchChoiceLocked = True
+	FinalOutcomeSent = True
+	CurrentPhase = PhaseFinalizing
+	CurrentUpdateMode = UpdateModeNone
+	UnregisterForUpdate()
+
+	If speakerRef != None && !speakerRef.IsDead()
+		SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceFinish", speakerRef)
+		SendModEvent("TFDSystemEventClearAfterPleasure", ActorFormIDString(speakerRef), 0.0)
+	Else
+		SendModEvent("TFDAfterPleasureChoiceFinish")
+		SendModEvent("TFDSystemEventClearAfterPleasure")
+	EndIf
+
+	CleanupPleasureNow(asReason)
+EndFunction
 
 Function HandleSceneEndedFromOStim(Int aiThreadId, String asReason)
 	If !QuestActive
@@ -386,8 +636,16 @@ Function HandleSceneEndedFromOStim(Int aiThreadId, String asReason)
 		Return
 	EndIf
 
-	Debug.Trace("[TFD][PleasureQuest] HandleSceneEnded accepted reason=" + asReason + " thread=" + CurrentThreadId + " speaker=" + SafeActorName(ResolveCurrentSpeaker()))
+	Float sceneDuration = GetSceneRunningDuration()
+	If sceneDuration < MinOStimSceneDurationForAfterPleasure
+		Debug.Trace("[TFD][PleasureQuest] HandleSceneEnded rejected short scene reason=" + asReason + " duration=" + sceneDuration + " min=" + MinOStimSceneDurationForAfterPleasure + " thread=" + CurrentThreadId + " speaker=" + SafeActorName(ResolveCurrentSpeaker()))
+		FailPleasureScene("scene_ended_too_short", IsSceneCombatUnsafe("short_scene_end"))
+		Return
+	EndIf
+
+	Debug.Trace("[TFD][PleasureQuest] HandleSceneEnded accepted reason=" + asReason + " thread=" + CurrentThreadId + " duration=" + sceneDuration + " speaker=" + SafeActorName(ResolveCurrentSpeaker()))
 	SendRuntimeSceneEvent("TFDOStimSceneEnded", ResolveCurrentSpeaker(), CurrentSourceFlow, CurrentThreadId)
+	SceneRunningStartAt = 0.0
 	BeginAfterPleasure()
 EndFunction
 
@@ -496,9 +754,20 @@ Event OnUpdate()
 		Return
 	EndIf
 
+	If CurrentUpdateMode == UpdateModeDeferredAutoStart
+		CurrentUpdateMode = UpdateModeNone
+		PerformDeferredAutoStart()
+		Return
+	EndIf
+
 	If CurrentUpdateMode == UpdateModeRedoStart
 		CurrentUpdateMode = UpdateModeNone
 		PerformDeferredRedoStart()
+		Return
+	EndIf
+
+	If CurrentUpdateMode == UpdateModeSceneStartWatchdog
+		PerformSceneStartWatchdog()
 		Return
 	EndIf
 
@@ -627,6 +896,16 @@ Bool Function ChoosePleasure()
 		Return False
 	EndIf
 
+	If !CanPrepareSceneStart()
+		Debug.Trace("[TFD][PleasureQuest] ChoosePleasure failed CanPrepareSceneStart")
+		If CurrentSourceFlow == SourcePreCombat
+			AbortPleasureToNeutral("choose_pleasure_prepare_failed", False, True)
+		Else
+			AbortPleasureFromCombat("choose_pleasure_prepare_failed")
+		EndIf
+		Return False
+	EndIf
+
 	PendingAutoPleasureStart = False
 	BranchChoiceLocked = True
 	CurrentPhase = PhaseSceneStarting
@@ -703,6 +982,10 @@ Bool Function ChoosePay()
 	Return SendFinalChoice("TFDAfterPleasureChoiceFinish", "pay")
 EndFunction
 
+Bool Function ChooseEnd()
+	Return SendFinalChoice("TFDAfterPleasureChoiceFinish", "end")
+EndFunction
+
 Bool Function ChooseRelease()
 	Return ResolveTerminalOutcomeRelease()
 EndFunction
@@ -728,6 +1011,10 @@ Bool Function ChooseTerminateContract()
 EndFunction
 
 Bool Function ChooseWork()
+	If CurrentSourceFlow == SourceCaptive
+		Return ResolveTerminalOutcomeWork()
+	EndIf
+
 	Return SendFinalChoice("TFDAfterPleasureChoiceWork", "work")
 EndFunction
 
@@ -751,9 +1038,15 @@ Bool Function ResolveTerminalOutcomeRelease()
 	Debug.Trace("[TFD][PleasureQuest] ResolveTerminalOutcomeRelease speaker=" + SafeActorName(speakerRef) + " source=" + CurrentSourceFlow)
 	SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceRelease", speakerRef)
 
-	; Pleasure owns this terminal outcome.
-	; Do not hand off to PreCombat/InCombat/Bleedout release logic here.
-	ReleaseSourceFlowFallback(speakerRef, False)
+	If CurrentSourceFlow == SourceCaptive
+		SendCaptiveRequestEvent(CaptiveRequestReleaseEvent, speakerRef)
+		Debug.Trace("[TFD][PleasureQuest] ResolveTerminalOutcomeRelease via Captive release event")
+	ElseIf CurrentSourceFlow == SourceInCombat
+		Debug.Trace("[TFD][PleasureQuest] ResolveTerminalOutcomeRelease via InCombat after-pleasure native event only")
+	Else
+		ReleaseSourceFlowFallback(speakerRef, False)
+	EndIf
+
 	EmitNeutralReleaseGrace(speakerRef)
 	CleanupPleasureNow("release")
 	Return True
@@ -761,7 +1054,6 @@ EndFunction
 
 Bool Function ResolveTerminalOutcomeRecruit()
 	Actor speakerRef = ResolveCurrentSpeaker()
-	Int sourceFlow = CurrentSourceFlow
 
 	If !PrepareTerminalOutcome("recruit")
 		Return False
@@ -773,17 +1065,9 @@ Bool Function ResolveTerminalOutcomeRecruit()
 		Return False
 	EndIf
 
-	Bool ok = RouteRecruitOutcome(speakerRef)
-	Debug.Trace("[TFD][PleasureQuest] ResolveTerminalOutcomeRecruit speaker=" + SafeActorName(speakerRef) + " source=" + CurrentSourceFlow + " ok=" + BoolText(ok))
-
-	If !ok
-		AbortPleasureToNeutral("recruit_route_failed", False, False)
-		Return False
-	EndIf
-
+	Debug.Trace("[TFD][PleasureQuest] ResolveTerminalOutcomeRecruit native_owned=true registry_deferred_to_native=true speaker=" + SafeActorName(speakerRef) + " source=" + CurrentSourceFlow)
 	SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceRecruit", speakerRef)
 	CleanupPleasureNow("recruit")
-	ReprimeAfterPleasureRecruit(speakerRef, sourceFlow)
 	Return True
 EndFunction
 
@@ -811,6 +1095,32 @@ Bool Function ResolveTerminalOutcomeCaptive()
 
 	CleanupPleasureNow("captive")
 	Return routed
+EndFunction
+
+Bool Function ResolveTerminalOutcomeWork()
+	Actor speakerRef = ResolveCurrentSpeaker()
+
+	If !PrepareTerminalOutcome("work")
+		Return False
+	EndIf
+
+	If speakerRef == None
+		Debug.Trace("[TFD][PleasureQuest] ResolveTerminalOutcomeWork failed no speaker")
+		AbortPleasureToNeutral("work_no_speaker", False, False)
+		Return False
+	EndIf
+
+	Debug.Trace("[TFD][PleasureQuest] ResolveTerminalOutcomeWork speaker=" + SafeActorName(speakerRef) + " source=" + CurrentSourceFlow)
+	SendAfterPleasureChoiceEvent("TFDAfterPleasureChoiceWork", speakerRef)
+
+	If CurrentSourceFlow == SourceCaptive
+		SendCaptiveRequestEvent(CaptiveRequestWorkEvent, speakerRef)
+		CleanupPleasureNow("work")
+		Return True
+	EndIf
+
+	CleanupPleasureNow("work")
+	Return True
 EndFunction
 
 Bool Function PrepareTerminalOutcome(String asReason)
@@ -856,12 +1166,24 @@ Bool Function RouteReleaseOutcome(Actor akSpeaker)
 			Debug.Trace("[TFD][PleasureQuest] RouteReleaseOutcome via PreCombat")
 			Return True
 		EndIf
-	ElseIf CurrentSourceFlow == SourceBleedout || CurrentSourceFlow == SourceCaptive
+	ElseIf CurrentSourceFlow == SourceBleedout
 		If bleedCtrl != None
 			Bool ok = bleedCtrl.ResolveRelease()
-			Debug.Trace("[TFD][PleasureQuest] RouteReleaseOutcome via Bleedout/Captive ok=" + BoolText(ok))
+			Debug.Trace("[TFD][PleasureQuest] RouteReleaseOutcome via Bleedout ok=" + BoolText(ok))
 			Return ok
 		EndIf
+	ElseIf CurrentSourceFlow == SourceCaptive
+		SendCaptiveRequestEvent(CaptiveRequestReleaseEvent, akSpeaker)
+		Debug.Trace("[TFD][PleasureQuest] RouteReleaseOutcome via Captive event")
+		Return True
+	ElseIf CurrentSourceFlow == SourceInCombat
+		Float useDuration = NeutralReleaseGraceDuration
+		If useDuration <= 0.0
+			useDuration = 10.0
+		EndIf
+		SendModEvent("TFDInCombatOutcomeRelease", BuildActorArg(akSpeaker), useDuration)
+		Debug.Trace("[TFD][PleasureQuest] RouteReleaseOutcome via InCombat release duration=" + useDuration)
+		Return True
 	EndIf
 
 	Debug.Trace("[TFD][PleasureQuest] RouteReleaseOutcome no route source=" + CurrentSourceFlow)
@@ -869,46 +1191,12 @@ Bool Function RouteReleaseOutcome(Actor akSpeaker)
 EndFunction
 
 Bool Function RouteRecruitOutcome(Actor akSpeaker)
-	TFDPreCombatQuestScript preCtrl = TFDPreCombatQuest
-
-	If preCtrl != None
-		Bool ok = preCtrl.PromoteActorAsRecruitLikeOutcome(akSpeaker, CurrentSourceFlow == SourcePreCombat)
-		Debug.Trace("[TFD][PleasureQuest] RouteRecruitOutcome via PreCombatQuest ok=" + BoolText(ok) + " source=" + CurrentSourceFlow)
-		Return ok
-	EndIf
-
-	Debug.Trace("[TFD][PleasureQuest] RouteRecruitOutcome no route source=" + CurrentSourceFlow)
-	Return False
+	Debug.Trace("[TFD][PleasureQuest] RouteRecruitOutcome disabled native_owned=true registry_deferred_to_native=true speaker=" + SafeActorName(akSpeaker) + " source=" + CurrentSourceFlow)
+	Return True
 EndFunction
 
 Function ReprimeAfterPleasureRecruit(Actor akSpeaker, Int aiSourceFlow)
-	TFDPreCombatQuestScript preCtrl = TFDPreCombatQuest
-
-	If akSpeaker == None || akSpeaker.IsDead()
-		Debug.Trace("[TFD][PleasureQuest] ReprimeAfterPleasureRecruit skipped invalid speaker")
-		Return
-	EndIf
-
-	; AfterPleasure recruit can happen while the final dialogue/menu is still unwinding.
-	; Re-prime once more after cleanup so the teammate package has a clean chance to evaluate.
-	Utility.WaitMenuMode(0.25)
-
-	If akSpeaker.IsDead()
-		Debug.Trace("[TFD][PleasureQuest] ReprimeAfterPleasureRecruit skipped dead speaker")
-		Return
-	EndIf
-
-	If preCtrl != None
-		Bool ok = preCtrl.PromoteActorAsRecruitLikeOutcome(akSpeaker, aiSourceFlow == SourcePreCombat)
-		Debug.Trace("[TFD][PleasureQuest] ReprimeAfterPleasureRecruit via PreCombatQuest ok=" + BoolText(ok) + " source=" + aiSourceFlow)
-		Return
-	EndIf
-
-	akSpeaker.SetPlayerTeammate(True, False)
-	akSpeaker.StopCombat()
-	akSpeaker.StopCombatAlarm()
-	akSpeaker.EvaluatePackage()
-	Debug.Trace("[TFD][PleasureQuest] ReprimeAfterPleasureRecruit fallback package evaluate speaker=" + SafeActorName(akSpeaker))
+	Debug.Trace("[TFD][PleasureQuest] ReprimeAfterPleasureRecruit disabled native_owned=true no_promote=true no_package_eval=true speaker=" + SafeActorName(akSpeaker) + " source=" + aiSourceFlow)
 EndFunction
 
 Bool Function RouteCaptiveOutcome(Actor akSpeaker)
@@ -917,16 +1205,25 @@ Bool Function RouteCaptiveOutcome(Actor akSpeaker)
 
 	If CurrentSourceFlow == SourcePreCombat
 		If preCtrl != None
-			preCtrl.ResolveKidnap()
-			Debug.Trace("[TFD][PleasureQuest] RouteCaptiveOutcome via PreCombat")
-			Return True
+			preCtrl.ReleasePleasureLock(True)
 		EndIf
-	ElseIf CurrentSourceFlow == SourceBleedout || CurrentSourceFlow == SourceCaptive
+		SendModEvent(PreCombatOutcomeCaptiveEvent, BuildActorArg(akSpeaker))
+		Debug.Trace("[TFD][PleasureQuest] RouteCaptiveOutcome via PreCombat direct event=" + PreCombatOutcomeCaptiveEvent + " speaker=" + SafeActorName(akSpeaker))
+		Return True
+	ElseIf CurrentSourceFlow == SourceBleedout
 		If bleedCtrl != None
 			Bool ok = bleedCtrl.ResolveKidnap()
-			Debug.Trace("[TFD][PleasureQuest] RouteCaptiveOutcome via Bleedout/Captive ok=" + BoolText(ok))
+			Debug.Trace("[TFD][PleasureQuest] RouteCaptiveOutcome via Bleedout ok=" + BoolText(ok))
 			Return ok
 		EndIf
+	ElseIf CurrentSourceFlow == SourceCaptive
+		SendCaptiveRequestEvent(CaptiveRequestReturnEvent, akSpeaker)
+		Debug.Trace("[TFD][PleasureQuest] RouteCaptiveOutcome via Captive return event")
+		Return True
+	ElseIf CurrentSourceFlow == SourceInCombat
+		SendModEvent("TFDInCombatOutcomeCaptive", BuildActorArg(akSpeaker))
+		Debug.Trace("[TFD][PleasureQuest] RouteCaptiveOutcome via InCombat event")
+		Return True
 	EndIf
 
 	Debug.Trace("[TFD][PleasureQuest] RouteCaptiveOutcome no route source=" + CurrentSourceFlow)
@@ -947,7 +1244,7 @@ Function ReleaseSourceFlowFallback(Actor akSpeaker, Bool abStartCombat = False)
 				preCtrl.ReleasePleasureLock(True)
 			EndIf
 		EndIf
-	ElseIf CurrentSourceFlow == SourceBleedout || CurrentSourceFlow == SourceCaptive
+	ElseIf CurrentSourceFlow == SourceBleedout
 		If bleedCtrl != None
 			bleedCtrl.ClearSpeakerForActor(akSpeaker)
 			bleedCtrl.ClearDialogueBridgesAfterChoice()
@@ -955,6 +1252,29 @@ Function ReleaseSourceFlowFallback(Actor akSpeaker, Bool abStartCombat = False)
 				SendModEvent("TFDBleedoutOutcomeReset")
 			EndIf
 		EndIf
+	ElseIf CurrentSourceFlow == SourceCaptive
+		If abStartCombat
+			SendCaptiveRequestEvent(CaptiveRequestEscapeEvent, akSpeaker)
+		Else
+			SendCaptiveRequestEvent(CaptiveRequestReturnEvent, akSpeaker)
+		EndIf
+	ElseIf CurrentSourceFlow == SourceInCombat
+		If abStartCombat
+			SendModEvent("TFDInCombatOutcomeFailed", BuildActorArg(akSpeaker))
+			Debug.Trace("[TFD][PleasureQuest] ReleaseSourceFlowFallback via InCombat failed")
+		Else
+			SendModEvent("TFDInCombatOutcomeCancel", BuildActorArg(akSpeaker))
+			Debug.Trace("[TFD][PleasureQuest] ReleaseSourceFlowFallback via InCombat cancel")
+		EndIf
+	EndIf
+EndFunction
+
+Function SendCaptiveRequestEvent(String asEventName, Actor akSpeaker)
+	Debug.Trace("[TFD][PleasureQuest] SendCaptiveRequestEvent event=" + asEventName + " speaker=" + SafeActorName(akSpeaker) + " source=" + CurrentSourceFlow)
+	If akSpeaker != None && !akSpeaker.IsDead()
+		akSpeaker.SendModEvent(asEventName, BuildActorArg(akSpeaker), 0.0)
+	Else
+		SendModEvent(asEventName)
 	EndIf
 EndFunction
 
@@ -1032,6 +1352,12 @@ Bool Function StartSceneNow()
 		Return False
 	EndIf
 
+	If IsSceneCombatUnsafe("StartSceneNow")
+		Debug.Trace("[TFD][PleasureQuest] StartSceneNow failed combat unsafe speaker=" + SafeActorName(speakerRef))
+		Return False
+	EndIf
+
+	SceneRunningStartAt = 0.0
 	Actor[] participants = new Actor[2]
 	participants[0] = playerRef
 	participants[1] = speakerRef
@@ -1045,6 +1371,7 @@ Bool Function StartSceneNow()
 
 	SendRuntimeSceneEvent("TFDOStimSceneStartPending", speakerRef, CurrentSourceFlow, CurrentThreadId)
 	Debug.Trace("[TFD][PleasureQuest] StartSceneNow sent TFDOStimSceneStartPending thread=" + CurrentThreadId)
+	ArmSceneStartWatchdog("StartSceneNow")
 	Return True
 EndFunction
 
@@ -1064,7 +1391,120 @@ Bool Function CanPrepareSceneStart()
 		Return False
 	EndIf
 
+	If IsSceneCombatUnsafe("CanPrepareSceneStart")
+		Return False
+	EndIf
+
 	Return True
+EndFunction
+
+Function ArmDeferredAutoStart(String asReason = "")
+	PendingAutoStartReason = asReason
+	CurrentUpdateMode = UpdateModeDeferredAutoStart
+	UnregisterForUpdate()
+	Debug.Trace("[TFD][PleasureQuest] ArmDeferredAutoStart reason=" + asReason + " delay=" + PreCombatAutoStartDelay + " speaker=" + SafeActorName(ResolveCurrentSpeaker()))
+	RegisterForSingleUpdate(PreCombatAutoStartDelay)
+EndFunction
+
+Function PerformDeferredAutoStart()
+	If !QuestActive
+		Debug.Trace("[TFD][PleasureQuest] PerformDeferredAutoStart ignored inactive")
+		Return
+	EndIf
+
+	If CurrentPhase != PhasePleasureDialogue
+		Debug.Trace("[TFD][PleasureQuest] PerformDeferredAutoStart ignored wrong phase=" + CurrentPhase)
+		Return
+	EndIf
+
+	If !AreCoreAliasesValid()
+		Debug.Trace("[TFD][PleasureQuest] PerformDeferredAutoStart aliases not ready reason=" + PendingAutoStartReason)
+		BeginAliasAcquire("deferred_auto_start_alias")
+		Return
+	EndIf
+
+	If !CanPrepareSceneStart()
+		Debug.Trace("[TFD][PleasureQuest] PerformDeferredAutoStart failed CanPrepareSceneStart reason=" + PendingAutoStartReason)
+		If CurrentSourceFlow == SourcePreCombat
+			AbortPleasureToNeutral("precombat_deferred_start_unsafe", False, True)
+		Else
+			AbortPleasureFromCombat("precombat_deferred_start_unsafe")
+		EndIf
+		Return
+	EndIf
+
+	PendingAutoPleasureStart = False
+	Debug.Trace("[TFD][PleasureQuest] PerformDeferredAutoStart start reason=" + PendingAutoStartReason + " speaker=" + SafeActorName(ResolveCurrentSpeaker()))
+	ChoosePleasure()
+EndFunction
+
+Function ArmSceneStartWatchdog(String asReason = "")
+	SceneStartPendingAt = Utility.GetCurrentRealTime()
+	CurrentUpdateMode = UpdateModeSceneStartWatchdog
+	UnregisterForUpdate()
+	Debug.Trace("[TFD][PleasureQuest] ArmSceneStartWatchdog reason=" + asReason + " delay=" + SceneStartWatchdogDelay + " timeout=" + SceneStartTimeout + " thread=" + CurrentThreadId)
+	RegisterForSingleUpdate(SceneStartWatchdogDelay)
+EndFunction
+
+Function StopPendingOStimThread(String asReason = "")
+	If CurrentThreadId < 0
+		Return
+	EndIf
+
+	Bool running = False
+	running = OThread.IsRunning(CurrentThreadId)
+	Debug.Trace("[TFD][PleasureQuest] StopPendingOStimThread reason=" + asReason + " thread=" + CurrentThreadId + " running=" + BoolText(running))
+
+	If running
+		OThread.Stop(CurrentThreadId)
+	EndIf
+EndFunction
+
+Function PerformSceneStartWatchdog()
+	If !QuestActive
+		Return
+	EndIf
+
+	If CurrentPhase != PhaseSceneStarting || !AwaitingSceneStart
+		Debug.Trace("[TFD][PleasureQuest] SceneStartWatchdog ignored phase=" + CurrentPhase + " awaiting=" + BoolText(AwaitingSceneStart))
+		Return
+	EndIf
+
+	If IsSceneCombatUnsafe("scene_start_watchdog")
+		StopPendingOStimThread("scene_start_combat_unsafe")
+		If CurrentSourceFlow == SourcePreCombat || CurrentSourceFlow == SourceInCombat
+			FailPleasureScene("scene_start_combat_unsafe", False)
+		Else
+			FailPleasureScene("scene_start_combat_unsafe", True)
+		EndIf
+		Return
+	EndIf
+
+	Float elapsed = Utility.GetCurrentRealTime() - SceneStartPendingAt
+	If elapsed >= SceneStartTimeout
+		Bool threadRunning = False
+		If CurrentThreadId >= 0
+			threadRunning = OThread.IsRunning(CurrentThreadId)
+		EndIf
+		If threadRunning
+			; R93Z: OStim can report thread start late during combat-to-scene handoff.
+			; If the thread is already running, accept it instead of aborting the scene.
+			AwaitingSceneStart = False
+			CurrentPhase = PhaseSceneRunning
+			SceneRunningStartAt = Utility.GetCurrentRealTime()
+			SceneStartPendingAt = 0.0
+			UpdatePleasureState(2)
+			Debug.Trace("[TFD][PleasureQuest][R93Z] SceneStartWatchdog accepted running thread=" + CurrentThreadId + " source=" + CurrentSourceFlow + " elapsed=" + elapsed)
+			SendRuntimeSceneEvent("TFDOStimSceneStarted", ResolveCurrentSpeaker(), CurrentSourceFlow, CurrentThreadId)
+			Return
+		EndIf
+		StopPendingOStimThread("scene_start_timeout")
+		FailPleasureScene("scene_start_timeout", False)
+		Return
+	EndIf
+
+	CurrentUpdateMode = UpdateModeSceneStartWatchdog
+	RegisterForSingleUpdate(SceneStartWatchdogDelay)
 EndFunction
 
 Function ArmRedoStart()
@@ -1087,7 +1527,11 @@ Function PerformDeferredRedoStart()
 
 	If !CanPrepareSceneStart()
 		Debug.Trace("[TFD][PleasureQuest] PerformDeferredRedoStart failed CanPrepareSceneStart")
-		AbortPleasure("redo_prepare_failed")
+		If CurrentSourceFlow == SourcePreCombat
+			AbortPleasureToNeutral("redo_prepare_failed", False, True)
+		Else
+			AbortPleasureFromCombat("redo_prepare_failed")
+		EndIf
 		Return
 	EndIf
 
@@ -1099,7 +1543,11 @@ Function PerformDeferredRedoStart()
 
 	AwaitingSceneStart = False
 	Debug.Trace("[TFD][PleasureQuest] PerformDeferredRedoStart StartSceneNow failed")
-	AbortPleasure("redo_start_failed")
+	If CurrentSourceFlow == SourcePreCombat
+		AbortPleasureToNeutral("redo_start_failed", False, True)
+	Else
+		AbortPleasureFromCombat("redo_start_failed")
+	EndIf
 EndFunction
 
 Function ArmCleanup(String asReason)
@@ -1115,6 +1563,9 @@ Function CleanupPleasureNow(String asReason = "")
 	Debug.Trace("[TFD][PleasureQuest] CleanupPleasureNow reason=" + asReason + " phase=" + CurrentPhase + " thread=" + CurrentThreadId)
 	UnregisterForUpdate()
 	CurrentUpdateMode = UpdateModeNone
+	SceneRunningStartAt = 0.0
+	SceneStartPendingAt = 0.0
+	PendingAutoStartReason = ""
 
 	; PlayerAlias can be a non-optional forced player alias in CK.
 	; Do not clear it here, only keep it from blocking pleasure cleanup.
@@ -1143,6 +1594,8 @@ Function ResetRuntime(String asReason = "")
 	QuestActive = False
 	BranchChoiceLocked = False
 	PendingAutoPleasureStart = False
+	SceneStartPendingAt = 0.0
+	PendingAutoStartReason = ""
 	AliasRetryCount = 0
 	PendingOpenReason = ""
 	PendingCleanupReason = ""

@@ -117,18 +117,43 @@ Event OnInit()
 EndEvent
 
 Event OnPlayerLoadGame()
-	InstallBlocker()
+	ReinstallBlockerAfterLoad()
 EndEvent
 
 Function InstallBlocker()
 	if _installed
+		RegisterEvents()
+		ArmPollingUpdate()
+		Log("install refresh")
 		return
 	endif
 
 	_installed = True
 	RegisterEvents()
 	Log("installed")
-	RegisterForSingleUpdate(PollSeconds)
+	ArmPollingUpdate()
+EndFunction
+
+Function ReinstallBlockerAfterLoad()
+	_installed = True
+	RegisterEvents()
+	ArmPollingUpdate()
+	Log("reinstalled after load")
+EndFunction
+
+Function ArmPollingUpdate()
+	UnregisterForUpdate()
+	QueuePollingUpdate()
+EndFunction
+
+Function QueuePollingUpdate()
+	Float interval = PollSeconds
+
+	if interval <= 0.0
+		interval = 0.50
+	endif
+
+	RegisterForSingleUpdate(interval)
 EndFunction
 
 Function RegisterEvents()
@@ -173,7 +198,7 @@ Event OnUpdate()
 		endif
 	endif
 
-	RegisterForSingleUpdate(PollSeconds)
+	QueuePollingUpdate()
 EndEvent
 
 Event OnTFDStartPending(String eventName, String strArg, Float numArg, Form sender)

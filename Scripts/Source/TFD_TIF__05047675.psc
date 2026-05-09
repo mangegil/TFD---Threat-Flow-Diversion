@@ -6,11 +6,10 @@ Scriptname TFD_TIF__05047675 Extends TopicInfo Hidden
 Function Fragment_0(ObjectReference akSpeakerRef)
 Actor akSpeaker = akSpeakerRef as Actor
 ;BEGIN CODE
+;CREATURE FOLLOW
 TFDSystemEventQuestScript sys = (TFDSystemEventQuest as TFDSystemEventQuestScript)
 If sys != None
-	sys.ResolveRecruit(akSpeaker)
-Else
-	Debug.Trace("TFD_TIF__05047675: TFDSystemEventQuest property is None")
+	sys.ResolveFollowPlayer(akSpeaker)
 EndIf
 ;END CODE
 EndFunction
@@ -18,4 +17,4 @@ EndFunction
 
 ;END FRAGMENT CODE - Do not edit anything between this and the begin comment
 
-Quest Property TFDSystemEventQuest  Auto  
+Quest Property TFDSystemEventQuest Auto
